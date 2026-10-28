@@ -1,0 +1,35 @@
+# Detector thresholds — versioned
+# Each version records the threshold, training data hash, and performance.
+# Do NOT edit an existing version; add a new one.
+
+schema_version: 1
+
+versions:
+  - version: 1
+    created_at: "2026-10-28"
+    description: "Initial default thresholds (uncalibrated; updated after first real labelling run)"
+    training_data_hash: null   # null until real labels exist
+    thresholds:
+      ensemble_reliable: 0.70      # probability >= this → RELIABLE
+      ensemble_unreliable: 0.35    # probability <= this → UNRELIABLE  (else UNCERTAIN)
+      retrieval_confidence_min: 0.40
+      nli_entailment_min: 0.60
+      entity_overlap_min: 0.80
+      token_logprob_mean_min: -2.5
+    performance:
+      auroc: null
+      auprc: null
+      f1_at_threshold: null
+      ece: null
+      canary_catch_rate: null
+      false_alarm_rate: null
+      n_labels: 0
+
+active_version: 1
+
+# Fit-for-purpose criteria (team pre-registers these)
+fit_for_purpose_criteria:
+  min_canary_catch_rate: 0.85    # catch >= 85% of hallucinations
+  max_false_alarm_rate: 0.15     # at <= 15% false alarms
+  min_auroc: 0.80
+  min_human_kappa: 0.60

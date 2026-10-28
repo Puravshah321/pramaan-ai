@@ -1,0 +1,172 @@
+# Model Registry — Pramaan AI
+# All entries must specify: id, family, type, size_mb, estimated_vram_mb, license, source_url
+# GGUF model files are NOT bundled. Download commands shown in the UI.
+# SHA-256 hashes are filled after download and verified before use.
+
+embedding_models:
+  - id: all-MiniLM-L6-v2
+    family: MiniLM
+    params_m: 22
+    size_mb: 90
+    estimated_ram_mb: 180
+    max_seq_len: 512
+    dimensions: 384
+    license: Apache-2.0
+    hub: sentence-transformers/all-MiniLM-L6-v2
+    onnx_int8_available: true
+
+  - id: bge-small-en-v1.5
+    family: BGE
+    params_m: 33
+    size_mb: 130
+    estimated_ram_mb: 260
+    max_seq_len: 512
+    dimensions: 384
+    license: MIT
+    hub: BAAI/bge-small-en-v1.5
+    onnx_int8_available: true
+
+  - id: e5-small-v2
+    family: E5
+    params_m: 33
+    size_mb: 130
+    estimated_ram_mb: 260
+    max_seq_len: 512
+    dimensions: 384
+    license: MIT
+    hub: intfloat/e5-small-v2
+    onnx_int8_available: false
+
+  - id: gte-small
+    family: GTE
+    params_m: 33
+    size_mb: 130
+    estimated_ram_mb: 260
+    max_seq_len: 512
+    dimensions: 384
+    license: Apache-2.0
+    hub: thenlper/gte-small
+    onnx_int8_available: false
+
+  - id: bge-base-en-v1.5
+    family: BGE
+    params_m: 110
+    size_mb: 440
+    estimated_ram_mb: 880
+    max_seq_len: 512
+    dimensions: 768
+    license: MIT
+    hub: BAAI/bge-base-en-v1.5
+    onnx_int8_available: true
+
+llm_models:
+  - id: Qwen2.5-0.5B-Instruct-Q4_K_M
+    family: Qwen2.5
+    base_params_b: 0.5
+    quant: Q4_K_M
+    size_mb: 400
+    estimated_vram_mb: 500
+    estimated_ram_mb: 600
+    license: Apache-2.0
+    gguf_filename: Qwen2.5-0.5B-Instruct-Q4_K_M.gguf
+    sha256: null  # filled after download
+    download_url: https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF
+
+  - id: Qwen2.5-1.5B-Instruct-Q4_K_M
+    family: Qwen2.5
+    base_params_b: 1.5
+    quant: Q4_K_M
+    size_mb: 980
+    estimated_vram_mb: 1200
+    estimated_ram_mb: 1400
+    license: Apache-2.0
+    gguf_filename: Qwen2.5-1.5B-Instruct-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF
+
+  - id: Qwen2.5-3B-Instruct-Q4_K_M
+    family: Qwen2.5
+    base_params_b: 3.0
+    quant: Q4_K_M
+    size_mb: 1900
+    estimated_vram_mb: 2300
+    estimated_ram_mb: 2600
+    license: Apache-2.0
+    gguf_filename: Qwen2.5-3B-Instruct-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/Qwen/Qwen2.5-3B-Instruct-GGUF
+
+  - id: Llama-3.2-1B-Instruct-Q4_K_M
+    family: Llama3.2
+    base_params_b: 1.0
+    quant: Q4_K_M
+    size_mb: 680
+    estimated_vram_mb: 850
+    estimated_ram_mb: 1000
+    license: Meta Llama 3.2 Community License
+    gguf_filename: Llama-3.2-1B-Instruct-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/bartowski/Llama-3.2-1B-Instruct-GGUF
+
+  - id: Llama-3.2-3B-Instruct-Q4_K_M
+    family: Llama3.2
+    base_params_b: 3.0
+    quant: Q4_K_M
+    size_mb: 1900
+    estimated_vram_mb: 2300
+    estimated_ram_mb: 2600
+    license: Meta Llama 3.2 Community License
+    gguf_filename: Llama-3.2-3B-Instruct-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/bartowski/Llama-3.2-3B-Instruct-GGUF
+
+  - id: gemma-2-2b-it-Q4_K_M
+    family: Gemma2
+    base_params_b: 2.0
+    quant: Q4_K_M
+    size_mb: 1600
+    estimated_vram_mb: 2000
+    estimated_ram_mb: 2200
+    license: Gemma Terms of Use
+    gguf_filename: gemma-2-2b-it-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/bartowski/gemma-2-2b-it-GGUF
+
+  - id: Phi-3.5-mini-instruct-Q4_K_M
+    family: Phi3.5
+    base_params_b: 3.8
+    quant: Q4_K_M
+    size_mb: 2400
+    estimated_vram_mb: 2900
+    estimated_ram_mb: 3200
+    license: MIT
+    gguf_filename: Phi-3.5-mini-instruct-Q4_K_M.gguf
+    sha256: null
+    download_url: https://huggingface.co/bartowski/Phi-3.5-mini-instruct-GGUF
+
+quantization_levels:
+  - id: Q2_K
+    bits: 2
+    description: "2-bit quantization (very small, low quality)"
+  - id: Q3_K_M
+    bits: 3
+    description: "3-bit quantization (small, moderate quality)"
+  - id: Q4_K_M
+    bits: 4
+    description: "4-bit quantization (default, good quality/size balance)"
+  - id: Q5_K_M
+    bits: 5
+    description: "5-bit quantization (better quality, larger)"
+  - id: Q8_0
+    bits: 8
+    description: "8-bit quantization (near-lossless, large)"
+  - id: F16
+    bits: 16
+    description: "Full float16 (lossless, requires most memory)"
+
+nli_models:
+  - id: cross-encoder/nli-deberta-v3-small
+    size_mb: 180
+    estimated_ram_mb: 400
+    license: Apache-2.0
+    hub: cross-encoder/nli-deberta-v3-small

@@ -1,0 +1,162 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
+@import "tailwindcss";
+
+/* ── Design System Tokens ─────────────────────────────────────────────────── */
+:root {
+  --color-bg: #0B1020;
+  --color-surface: #121A2E;
+  --color-surface-2: #1a2540;
+  --color-border: #223052;
+  --color-text: #E6EAF5;
+  --color-text-muted: #8899BB;
+  --color-primary: #6366F1;
+  --color-primary-hover: #4F52D9;
+  --color-reliable: #2DD4BF;
+  --color-uncertain: #F59E0B;
+  --color-unreliable: #F43F5E;
+  --color-info: #38BDF8;
+  --radius-card: 0.75rem;
+  --shadow-card: 0 4px 24px rgba(0, 0, 0, 0.4);
+  --transition: 150ms ease-out;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────────────── */
+*, *::before, *::after {
+  box-sizing: border-box;
+}
+
+html {
+  font-size: 16px;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  background-color: var(--color-bg);
+  color: var(--color-text);
+  font-family: 'Inter', system-ui, sans-serif;
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── Typography ──────────────────────────────────────────────────────────── */
+.font-mono { font-family: 'JetBrains Mono', monospace; }
+.tabular-nums { font-variant-numeric: tabular-nums; }
+
+/* ── Scrollbar ───────────────────────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: var(--color-surface); }
+::-webkit-scrollbar-thumb { background: var(--color-border); border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #3a4f7a; }
+
+/* ── Card ────────────────────────────────────────────────────────────────── */
+.card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  box-shadow: var(--shadow-card);
+  padding: 1.25rem;
+  transition: border-color var(--transition);
+}
+.card:hover { border-color: #3a4f7a; }
+
+/* ── Status chips ────────────────────────────────────────────────────────── */
+.chip-reliable  { color: var(--color-reliable);   background: rgba(45,212,191,.12); }
+.chip-uncertain { color: var(--color-uncertain);  background: rgba(245,158,11,.12); }
+.chip-unreliable{ color: var(--color-unreliable); background: rgba(244,63,94,.12); }
+.chip-base {
+  display: inline-flex; align-items: center; gap: 4px;
+  padding: 2px 8px; border-radius: 99px;
+  font-size: 0.75rem; font-weight: 600; white-space: nowrap;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+.btn {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 0.5rem 1rem; border-radius: 8px; font-size: 0.875rem; font-weight: 500;
+  cursor: pointer; transition: all var(--transition); border: 1px solid transparent;
+}
+.btn:focus-visible { outline: 2px solid var(--color-primary); outline-offset: 2px; }
+.btn-primary {
+  background: var(--color-primary); color: white;
+}
+.btn-primary:hover { background: var(--color-primary-hover); }
+.btn-ghost {
+  background: transparent; color: var(--color-text-muted); border-color: var(--color-border);
+}
+.btn-ghost:hover { background: var(--color-surface-2); color: var(--color-text); }
+
+/* ── Demo ribbon ─────────────────────────────────────────────────────────── */
+.demo-ribbon {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 9999;
+  background: linear-gradient(90deg, #7c3aed, #6366F1, #7c3aed);
+  color: white; text-align: center; font-size: 0.75rem; font-weight: 700;
+  letter-spacing: 0.08em; padding: 4px 0;
+  text-transform: uppercase;
+}
+
+/* ── Sidebar ─────────────────────────────────────────────────────────────── */
+.sidebar {
+  width: 240px; background: var(--color-surface);
+  border-right: 1px solid var(--color-border);
+  display: flex; flex-direction: column; height: 100vh;
+  position: fixed; left: 0; top: 0; z-index: 100;
+  transition: width var(--transition);
+}
+.sidebar.collapsed { width: 60px; }
+
+.sidebar-item {
+  display: flex; align-items: center; gap: 10px; padding: 10px 14px;
+  color: var(--color-text-muted); font-size: 0.875rem; font-weight: 500;
+  cursor: pointer; transition: all var(--transition); border-radius: 8px; margin: 2px 8px;
+  text-decoration: none;
+}
+.sidebar-item:hover, .sidebar-item.active {
+  background: rgba(99,102,241,.15); color: var(--color-text);
+}
+.sidebar-item.active { color: var(--color-primary); }
+
+/* ── Main layout ─────────────────────────────────────────────────────────── */
+.main-layout { display: flex; min-height: 100vh; }
+.main-content { margin-left: 240px; flex: 1; padding: 1.5rem; transition: margin var(--transition); }
+.main-content.sidebar-collapsed { margin-left: 60px; }
+
+/* ── Metrics card ────────────────────────────────────────────────────────── */
+.metric-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-card);
+  padding: 1rem 1.25rem;
+  position: relative;
+  overflow: hidden;
+}
+.metric-card::before {
+  content: ''; position: absolute; top: 0; left: 0; right: 0; height: 2px;
+  background: linear-gradient(90deg, var(--color-primary), var(--color-reliable));
+}
+
+/* ── Input ───────────────────────────────────────────────────────────────── */
+.input {
+  background: var(--color-bg); border: 1px solid var(--color-border);
+  color: var(--color-text); border-radius: 8px; padding: 8px 12px; font-size: 0.875rem;
+  width: 100%; transition: border-color var(--transition);
+}
+.input:focus { outline: none; border-color: var(--color-primary); }
+
+/* ── Animations ──────────────────────────────────────────────────────────── */
+@media (prefers-reduced-motion: no-preference) {
+  .animate-fade { animation: fadeIn 150ms ease-out; }
+  .animate-slide { animation: slideIn 200ms ease-out; }
+}
+
+@keyframes fadeIn { from { opacity: 0 } to { opacity: 1 } }
+@keyframes slideIn { from { transform: translateY(-4px); opacity: 0 } to { transform: translateY(0); opacity: 1 } }
+
+/* ── Skeleton loader ─────────────────────────────────────────────────────── */
+.skeleton {
+  background: linear-gradient(90deg, var(--color-surface) 25%, var(--color-surface-2) 50%, var(--color-surface) 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 6px;
+}
+@keyframes shimmer { 0% { background-position: 200% 0 } 100% { background-position: -200% 0 } }

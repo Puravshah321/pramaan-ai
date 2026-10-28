@@ -1,0 +1,48 @@
+# Hardware profiles for Pramaan AI
+# Each profile defines hard limits enforced BEFORE a config is run.
+# A config exceeding any limit is stored as 'infeasible' with the reason.
+
+profiles:
+  CPU-8GB:
+    description: "CPU-only laptop or desktop with 8 GB total RAM"
+    ram_gb: 8.0
+    vram_gb: 0.0
+    gpu: false
+    max_power_w: null          # not measurable without NVML
+
+  CPU-16GB:
+    description: "CPU-only machine with 16 GB RAM"
+    ram_gb: 16.0
+    vram_gb: 0.0
+    gpu: false
+    max_power_w: null
+
+  GTX1650-4GB:
+    description: "NVIDIA GTX 1650 (4 GB VRAM) + 16 GB system RAM"
+    ram_gb: 16.0
+    vram_gb: 4.0
+    gpu: true
+    max_power_w: 75
+
+  RTX3050-4GB:
+    description: "NVIDIA RTX 3050 (4 GB VRAM) + 16 GB system RAM"
+    ram_gb: 16.0
+    vram_gb: 4.0
+    gpu: true
+    max_power_w: 80
+
+  T4-16GB:
+    description: "NVIDIA T4 (16 GB VRAM) — Sheshnag-class cloud GPU"
+    ram_gb: 32.0
+    vram_gb: 16.0
+    gpu: true
+    max_power_w: 70
+
+  A100-40GB:
+    description: "NVIDIA A100 (40 GB VRAM)"
+    ram_gb: 128.0
+    vram_gb: 40.0
+    gpu: true
+    max_power_w: 400
+
+default_profile: CPU-8GB
