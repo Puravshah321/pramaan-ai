@@ -52,6 +52,7 @@ async def get_recommendation(
             "memory_source": m.memory_source,
             "tokens_per_second": m.tokens_per_second,
             "n": m.n,
+            "failed_calls": m.failed_calls,
         })
 
     return find_recommendation(

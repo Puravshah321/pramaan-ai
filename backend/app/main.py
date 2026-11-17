@@ -14,6 +14,7 @@ from app.config import settings
 from app.db import init_db
 from app.routes import (
     corpora,
+    hardware,
     health,
     hf,
     recommend,
@@ -80,6 +81,7 @@ async def generic_error_handler(request: Request, exc: Exception) -> JSONRespons
 
 # Mount all routers
 app.include_router(health.router)
+app.include_router(hardware.router)
 app.include_router(hf.router)
 app.include_router(setup.router)
 app.include_router(corpora.router)

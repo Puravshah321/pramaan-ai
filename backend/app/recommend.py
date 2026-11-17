@@ -11,23 +11,40 @@ def find_recommendation(
     goal: str = "best_quality",  # "best_quality", "balanced", "fastest", "smallest"
 ) -> dict[str, Any]:
     """Filters configurations by limits and ranks according to the user's goal.
-    Returns:
-    - chosen: the best configuration
-    - why_chosen: computed statement explaining why it won
-    - next_best: list of runner-ups
-    - nothing_fits: bool, with closest_option and required limits if True
+
+    Enforces integrity rules:
+    - Only configurations with >= 80% answer completion rate are admitted.
+    - Requires at least 3 distinct measured configurations to make Pareto-optimal claims.
+    - Highlights when sample size n < 100 questions.
     """
-    if not configs_with_metrics:
+    # Filter 1: Completion rate >= 80%
+    qualifying_configs = []
+    for c in configs_with_metrics:
+        n = c.get("n", 0)
+        failed = c.get("failed_calls", 0)
+        if n > 0:
+            completion_rate = (n - failed) / float(n)
+            if completion_rate >= 0.8:
+                c["completion_rate"] = round(completion_rate, 3)
+                qualifying_configs.append(c)
+
+    total_setups = len(qualifying_configs)
+
+    if total_setups == 0:
         return {
             "chosen": None,
-            "why_chosen": "No measured configurations exist yet. Run a benchmark first.",
+            "why_chosen": "No configurations have completed at least 80% of test questions. Run a benchmark first.",
             "next_best": [],
             "nothing_fits": True,
             "closest_option": None,
+            "insufficient_setups": True,
+            "setup_count": 0,
+            "required_setups": 3,
+            "low_sample_warning": None,
         }
 
     valid_configs = []
-    for c in configs_with_metrics:
+    for c in qualifying_configs:
         # Convert memory to GB (metrics.memory_mb is in MB)
         mem_mb = c.get("memory_mb", 0.0)
         mem_gb = mem_mb / 1024.0
@@ -41,7 +58,6 @@ def find_recommendation(
 
     # If nothing fits, find the closest
     if not valid_configs:
-        # Score proximity to limits
         def distance_to_limits(item: dict[str, Any]) -> float:
             mem_gb = item.get("memory_mb", 0.0) / 1024.0
             lat_s = item.get("latency_p50", 0.0) / 1000.0
@@ -49,7 +65,7 @@ def find_recommendation(
             lat_excess = max(0.0, lat_s - (latency_limit_s or 999.0))
             return mem_excess * 2.0 + lat_excess
 
-        sorted_by_closeness = sorted(configs_with_metrics, key=distance_to_limits)
+        sorted_by_closeness = sorted(qualifying_configs, key=distance_to_limits)
         closest = sorted_by_closeness[0]
         closest_mem_gb = round(closest.get("memory_mb", 0.0) / 1024.0, 2)
         closest_lat_s = round(closest.get("latency_p50", 0.0) / 1000.0, 2)
@@ -60,6 +76,10 @@ def find_recommendation(
             "next_best": [],
             "nothing_fits": True,
             "closest_option": closest,
+            "insufficient_setups": total_setups < 3,
+            "setup_count": total_setups,
+            "required_setups": 3,
+            "low_sample_warning": None,
             "admitting_limits": {
                 "required_memory_gb": closest_mem_gb,
                 "required_latency_s": closest_lat_s,
@@ -69,7 +89,7 @@ def find_recommendation(
     # Rank valid configurations based on goal
     def score_config(item: dict[str, Any]) -> float:
         f1 = item.get("f1", 0.0)
-        lat_s = item.get("latency_p50", 1.0) / 1000.0
+        lat_s = max(0.01, item.get("latency_p50", 1.0) / 1000.0)
         mem_gb = max(0.1, item.get("memory_mb", 100.0) / 1024.0)
 
         if goal == "best_quality":
@@ -85,8 +105,14 @@ def find_recommendation(
     chosen = ranked[0]
     next_best = ranked[1:4]
 
+    insufficient = total_setups < 3
+    n_sample = chosen.get("n", 0)
+    low_sample = f"Based on preliminary sample (n={n_sample} questions). Statistical robustness requires n ≥ 100 questions." if n_sample < 100 else None
+
     # Compute why chosen
-    if next_best:
+    if insufficient:
+        why = f"Preliminary observation: only {total_setups} configuration(s) measured so far (at least 3 setups required for definitive Pareto-optimal comparison). Leading option achieves F1 {chosen.get('f1', 0.0):.3f} with {chosen.get('memory_mb', 0.0) / 1024.0:.2f} GB memory footprint."
+    elif next_best:
         runner_up = next_best[0]
         f1_diff = round((chosen.get("f1", 0.0) - runner_up.get("f1", 0.0)) * 100, 1)
         lat_diff = round((runner_up.get("latency_p50", 0.0) - chosen.get("latency_p50", 0.0)) / 1000.0, 2)
@@ -107,4 +133,8 @@ def find_recommendation(
         "next_best": next_best,
         "nothing_fits": False,
         "closest_option": None,
+        "insufficient_setups": insufficient,
+        "setup_count": total_setups,
+        "required_setups": 3,
+        "low_sample_warning": low_sample,
     }

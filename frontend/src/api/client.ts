@@ -12,17 +12,18 @@ export const api = axios.create({
 
 export interface ApiHealth {
   status: string;
+  diagnosis?: string;
   huggingface: {
     reachable: boolean;
-    error: string | null;
+    router_accessible: boolean;
     token_present: boolean;
     username?: string | null;
-    token_role?: string | null;
-    is_fine_grained_scoped?: boolean;
-    router_accessible?: boolean;
     token_message?: string | null;
+    fix?: string | null;
     tokens_url?: string;
     providers_url?: string;
+    billing_url?: string;
+    test_model?: string | null;
   };
   local_runner: boolean;
   hardware?: {
@@ -31,6 +32,8 @@ export interface ApiHealth {
     gpu?: any;
     ram_total_mb: number;
     ram_available_mb: number;
+    max_recommended_params?: number;
+    max_recommended_quant?: string;
   };
   database: string;
 }
@@ -83,8 +86,49 @@ export interface ModelDetails {
   library_name?: string;
 }
 
+export interface HardwareProfile {
+  id: string;
+  name: string;
+  category: string;
+  memory_gb: number;
+  memory_type: string;
+  budget_gb: number;
+  bandwidth_gbps?: number | null;
+  source: string;
+  description: string;
+}
+
+export interface HardwareResponse {
+  detected: {
+    id: string;
+    name: string;
+    chip: string;
+    category: string;
+    total_gb: number;
+    budget_gb: number;
+    type: string;
+    system_ram_gb: number;
+    is_detected: boolean;
+  };
+  benchmark_hardware: {
+    name: string;
+    disclaimer: string;
+  };
+  profiles: HardwareProfile[];
+}
+
+export async function fetchHardware(): Promise<HardwareResponse> {
+  const res = await api.get<HardwareResponse>("/api/hardware");
+  return res.data;
+}
+
 export async function fetchHealth(): Promise<ApiHealth> {
   const res = await api.get<ApiHealth>("/api/health");
+  return res.data;
+}
+
+export async function recheckHealth(): Promise<ApiHealth> {
+  const res = await api.post<ApiHealth>("/api/health/recheck");
   return res.data;
 }
 

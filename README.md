@@ -1,58 +1,84 @@
 # Pramaan AI (प्रमाण)
 
 > **Know which answers to trust, and what they cost.**  
-> Pick your own models and documents, benchmark chunk size, Top-K, embedding model, language model and quantization, evaluate accuracy against latency and memory, obtain an optimal configuration for your hardware budget, and see every answer verified as *Reliable*, *Uncertain*, or *Unreliable* with zero fake data and zero silent fallbacks.
+> Pick your own models and documents, benchmark chunk size, Top-K, embedding model, language model and quantization, evaluate accuracy against latency and memory, obtain an optimal configuration for your hardware budget, and see every answer verified as *Reliable*, *Uncertain*, or *Unreliable* with zero fake data, zero synthetic estimations, and zero silent fallbacks.
 
 ![Pramaan AI Home](docs/images/home-desktop.png)
 
 ---
 
-## 1. Dual Execution Paths & Hardware Auto-Detection
+## 1. Executive Summary
 
-Pramaan AI supports two verifiable, production-grade execution paths:
+Pramaan AI is an empirical evaluation platform for Retrieval-Augmented Generation (RAG) running under real-world resource constraints. Modern LLM applications frequently fail in production due to silent extraction degradation, hallucinated answers under low context, or unexpected out-of-memory crashes on consumer and edge hardware.
 
-1. **Local Edge Runner (`llama-cpp-python` + GGUF):**
-   - Offline, reproducible benchmarking on local hardware with sub-4B models (e.g. `Qwen2.5-0.5B-Instruct`, `SmolLM2-1.7B-Instruct`).
-   - Auto-detects NVIDIA GPUs via NVML (`pynvml`), Apple Silicon Metal, or multi-threaded CPU.
-   - Measures real process memory (RAM RSS) and GPU VRAM footprint during inference.
-   - Evaluates real 4-bit (`Q4_K_M`) and 8-bit (`Q8_0`) integer quantizations.
-
-2. **Hosted Router Catalog (`router.huggingface.co/v1`):**
-   - Dynamic 3-check availability system: live catalog lookup, Hub metadata verification, and a live 1-token test call (cached 10 minutes).
-   - Unhardcoded: models must be confirmed available in the live router catalog.
-   - Token capability detection: identifies fine-grained token scope limitations and prompts configuration via `/api/health`.
-
-### Zero Silent Fallbacks & Audit Guarantee
-When a model call encounters an API error or network failure, the call is recorded as status `"failed"` with a plain-language error. Heuristic text extraction is never silently substituted for model outputs. Past runs are audited via `scripts/audit_runs.py` to isolate contaminated runs behind a *"Show invalid runs"* toggle.
+Pramaan AI solves this by measuring:
+1. **Dual Execution Paths:** Small open models (<4B) execute fully offline through a local quantized GGUF runner (`llama-cpp-python`), while larger models connect through live-verified Hugging Face Serverless Router endpoints (`https://router.huggingface.co/v1`).
+2. **Hardware-Aware Envelopes:** 32 verified hardware profiles (NVIDIA RTX/GTX/Cloud, Apple M1–M4 Silicon, and host RAM) map exact usable VRAM envelopes so teams pick configurations that genuinely fit without crashing.
+3. **Strict Evaluation Integrity:** No heuristic extractive fallbacks. When an LLM fails, it is recorded as `failed` with zero points. Answers and runs contaminated by verbatim heuristics are quarantined via `scripts/audit_runs.py`.
+4. **Supervised Reliability Verification:** An automatic grounding classifier flags hallucinated and ungrounded responses before they reach users.
 
 ---
 
-## 2. Measured Performance & Key Findings
+## 2. Hardware Profiles & Usable Memory Matrix
 
-All figures below are derived from live measurements stored in the SQLite database and exported via `scripts/make_report.py` into `docs/report_data.json` and `results/export/`.
+All profiles are defined in `backend/app/data/hardware_profiles.json` with verified specifications and official sources. Usable budgets leave mandatory headroom for OS display buffers, KV cache growth, and system processes.
 
-### Live Evaluation Statistics
+| Target Architecture | Total Memory | Memory Type | Usable Budget | Verified Reference |
+|:---|:---:|:---:|:---:|:---|
+| **NVIDIA GeForce RTX 3060** | 12.0 GB | VRAM (GDDR6) | **10.0 GB** | [TechPowerUp RTX 3060 12GB](https://www.techpowerup.com/gpu-specs/geforce-rtx-3060-12-gb.c3682) |
+| **NVIDIA GeForce RTX 4060 Ti** | 16.0 GB | VRAM (GDDR6) | **13.8 GB** | [TechPowerUp RTX 4060 Ti 16GB](https://www.techpowerup.com/gpu-specs/geforce-rtx-4060-ti-16-gb.c4185) |
+| **NVIDIA GeForce RTX 4090** | 24.0 GB | VRAM (GDDR6X) | **21.5 GB** | [TechPowerUp RTX 4090](https://www.techpowerup.com/gpu-specs/geforce-rtx-4090.c3889) |
+| **NVIDIA GeForce RTX 5090** | 32.0 GB | VRAM (GDDR7) | **28.5 GB** | [NVIDIA GeForce 50 Series](https://www.nvidia.com/en-us/geforce/graphics-cards/50-series/rtx-5090/) |
+| **NVIDIA Tesla T4** | 16.0 GB | VRAM (GDDR6) | **14.0 GB** | [NVIDIA Tesla T4 Specifications](https://www.nvidia.com/en-us/data-center/tesla-t4/) |
+| **NVIDIA L4 Cloud** | 24.0 GB | VRAM (GDDR6) | **21.5 GB** | [NVIDIA L4 Tensor Core GPU](https://www.nvidia.com/en-us/data-center/l4/) |
+| **NVIDIA A100 SXM** | 80.0 GB | VRAM (HBM2e) | **74.0 GB** | [NVIDIA A100 Tensor Core GPU](https://www.nvidia.com/en-us/data-center/a100/) |
+| **Apple M4 Base** | 16.0 GB | Unified Memory | **10.7 GB** (2/3 rule) | [Apple MacBook Pro M4 Specs](https://www.apple.com/macbook-pro/) |
+| **Apple M3 Pro** | 18.0 GB | Unified Memory | **13.5 GB** (3/4 rule) | [Apple Support M3 Pro](https://support.apple.com/en-us/111344) |
+| **Apple M4 Max** | 128.0 GB | Unified Memory | **96.0 GB** (3/4 rule) | [Apple MacBook Pro M4 Max](https://www.apple.com/macbook-pro/) |
+| **Host CPU System RAM** | 16.0 GB | DDR4/DDR5 | **10.5 GB** | [JEDEC DDR5 Spec JESD79-5C](https://www.jedec.org/standards-documents/docs/jesd79-5c) |
+| **Host CPU System RAM** | 32.0 GB | DDR4/DDR5 | **24.0 GB** | [JEDEC DDR5 Spec JESD79-5C](https://www.jedec.org/standards-documents/docs/jesd79-5c) |
 
-| Metric | Measured Value | Provenance / Source |
-|:---|:---:|:---|
-| **Evaluated Benchmark Set** | `50` questions / run | SQuAD v2 validation dataset (`rajpurkar/squad_v2`) |
-| **Local Runner Model** | `Qwen2.5-0.5B-Instruct` | Local GGUF runner (`llama-cpp-python`) |
-| **Quantization Profiles** | `Q4_K_M` & `Q8_0` | Measured integer quantized weights |
-| **Failed Calls** | `0` (Zero) | Real inference with 0 fallbacks |
-| **Token F1 Score** | `0.316` (Q4) / `0.305` (Q8) | Token overlap against gold SQuAD v2 spans |
-| **Recall@K (Top-K=3)** | `0.900` | FAISS vector retrieval on MiniLM embeddings |
-| **Median Latency (p50)** | `2.41s` (Q8) / `3.26s` (Q4) | Monotonic timer per QA pair |
-| **Peak Runtime Memory** | `220.0 MB` (Q4) / `1267.1 MB` (Q8) | Real measured process RSS & NVML VRAM |
-| **Hardware Detected** | NVIDIA RTX 4050 / CPU | Auto-detected NVML profile |
-| **Reliability Checker AUROC** | `1.000` | Logistic Regression on similarity, overlap & IDK flags |
+> [!NOTE]
+> **Latency Measurement Disclaimer:** Latencies are measured on the benchmark host runner. Target devices have differing compute architectures and memory bandwidths; expect different latencies on target edge hardware.
 
 ---
 
-## 3. Research Figures
+## 3. Token & Router Health Troubleshooting Matrix
 
-The benchmark generates publication-ready figures in `docs/figures/`:
+The backend health check dynamically inspects `backend/.env` on every request (`GET /api/health` and `POST /api/health/recheck`), testing live connectivity against `https://router.huggingface.co/v1/models` without hardcoded models.
 
-| Pareto Frontier (Latency vs F1) | Tradeoff Hyperparameters |
+| Diagnostic Code | HTTP Status / Trigger | Meaning & Root Cause | Actionable User Fix |
+|:---|:---:|:---|:---|
+| `no_token` | Missing in `.env` | No Hugging Face token found in `backend/.env`. | Create free token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens). Local runner still works offline. |
+| `token_invalid` | HTTP 401 | The token string in `.env` is malformed, expired, or revoked. | Generate a fresh token and paste into `backend/.env`. Click *Re-check connection*. |
+| `missing_inference_permission` | Fine-grained scope | Token lacks `Make calls to Inference Providers` or `Make calls to Inference Endpoints`. | Edit token permissions at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) or use a classic Read token. |
+| `credits_exhausted` | HTTP 402 | Pre-paid inference credits exhausted or PRO subscription required for third-party inference providers. | Add credits at [huggingface.co/settings/billing](https://huggingface.co/settings/billing). Local GGUF runner remains fully functional. |
+| `no_provider_enabled` | HTTP 404 / 422 | No third-party provider enabled or model not routed on free tier. | Enable providers at [huggingface.co/settings/inference-providers](https://huggingface.co/settings/inference-providers). |
+| `rate_limited` | HTTP 429 | Router rate limit exceeded. | Wait 60s or switch to local runner. |
+| `network_error` | Connection Error | Cannot reach `huggingface.co` or network timeout. | Check internet connection or VPN proxy settings. |
+| `token_fine` | HTTP 200 | Token valid and inference router call verified. | All hosted and local features ready. |
+
+---
+
+## 4. Measured Evaluation Results (Clean Valid Runs)
+
+All values below originate from audited, verified database runs on the SQuAD v2 validation dataset (`rajpurkar/squad_v2`), with zero synthetic estimations.
+
+| Configuration ID | Language Model | Quantization | Questions ($n$) | Failed Calls | Token F1 | Median Latency ($p50$) | Peak Process RAM |
+|:---|:---|:---:|:---:|:---:|:---:|:---:|:---:|
+| `cfg_c06f4add` | `Qwen2.5-0.5B-Instruct` | `Q4_K_M` | 50 | **0** | **0.316** | 3.26s | **220.0 MB** |
+| `cfg_e76b203d` | `Qwen2.5-0.5B-Instruct` | `Q8_0` | 50 | **0** | **0.305** | 2.41s | **1267.1 MB** |
+
+- **Pareto Trade-off:** `Q4_K_M` delivers **+3.6% higher F1** while slashing peak memory consumption by **82.6%** (220 MB vs 1267 MB) with a modest latency delta (+0.85s).
+- **Retrieval Recall:** Top-$K=3$ vector retrieval with `all-MiniLM-L6-v2` achieves **0.900 Recall@3** on 256-word chunks.
+
+---
+
+## 5. Research Figures
+
+Publication figures are rendered via `scripts/make_report.py`:
+
+| Pareto Frontier (Memory vs Quality) | Tradeoff Hyperparameters |
 |:---:|:---:|
 | ![Pareto Frontier](docs/figures/pareto_frontier.png) | ![Latency vs F1](docs/figures/latency_vs_f1.png) |
 | **Reliability Calibration Curve** | **Factor Effects (Chunk & Top-K)** |
@@ -60,148 +86,80 @@ The benchmark generates publication-ready figures in `docs/figures/`:
 
 ---
 
-## 4. Product Tour: 7 Unified Pages
+## 6. Product Pages Tour
 
-The application is structured into seven purpose-built pages, adhering to the editorial cream-and-ink visual aesthetic (`--paper: #F0E7D6`, `--ink: #1F1B16`, `--accent: #EA2E00`):
-
-| Page | Description | Screenshot |
-|:---|:---|:---:|
-| **1. Home (`/`)** | Hero with editorial typography, token capability warning banner, live interactive evidence card with highlight sweep, live numbers strip, and 4-step workflow. | ![Home](docs/images/home-desktop.png) |
-| **2. Guide (`/guide`)** | Interactive architectural walkthrough with SVG connectors and searchable technical glossary. | ![Guide](docs/images/guide-desktop.png) |
-| **3. Models (`/models`)** | Active configuration viewer, Hugging Face Hub search, candidate comparisons with availability route badges, and document corpus manager. | ![Models](docs/images/models-desktop.png) |
-| **4. Benchmark (`/benchmark`)** | 3-step setup flow with Quick, Balanced, and Custom presets, live progress streaming, invalid runs toggle, and clean cancellation. | ![Benchmark](docs/images/benchmark-desktop.png) |
-| **5. Results (`/results`)** | Pareto frontier scatter visualization, 6-column sortable table, factor effects, invalid runs filter, and reliability matrix. | ![Results](docs/images/results-desktop.png) |
-| **6. Recommend (`/recommend`)** | Single-row constraint sliders (Memory, Latency, Goal) with Pareto-optimal winner black card and comparative explanations. | ![Recommend](docs/images/recommend-desktop.png) |
-| **7. Try It (`/try-it`)** | Document testing laboratory with SQuAD v2 examples, custom upload/paste, AI suggestions, and confidence inspection. | ![Try It](docs/images/try-it-desktop.png) |
+| Page | URL | Purpose & Capabilities |
+|:---|:---:|:---|
+| **Home** | `/` | Editorial typography (`Fraunces` + `DM Sans`), dismissible dynamic health banner with *Re-check connection*, live evidence card with animated highlight sweep, and live database metric counters. |
+| **Guide** | `/guide` | Interactive architectural diagram with SVG paths and searchable technical glossary. |
+| **Models** | `/models` | Compact 2-row Active Setup with route badges (*Ready local*, *Ready hosted*, *Needs fix*), open-by-default model comparison table with GGUF quantizations and 1-token live test call, and preloaded QA datasets. |
+| **Benchmark** | `/benchmark` | 3-step setup (Presets: Quick, Balanced, Custom), real-time SSE progress streaming, and clean job cancellation. |
+| **Results** | `/results` | Pareto frontier visualization, 6-column sortable metrics table, factor sensitivity effects, and invalid runs toggle. |
+| **Recommend** | `/recommend` | Auto-detected machine chip, grouped hardware presets (RTX 3060, Apple Silicon, CPU RAM), search filter, hidden-by-default manual slider, and latency honesty disclaimer. |
+| **Try It** | `/try-it` | Real-time question answering with SQuAD v2 presets, document uploads, and confidence verification. |
 
 ---
 
-## 5. System Architecture
-
-```mermaid
-flowchart TD
-    subgraph Client ["Frontend (React 19 + TypeScript + Tailwind CSS)"]
-        UI["Editorial Theme UI (72px Header, Fraunces + DM Sans)"]
-        State["Active Setup State + React Query Cache"]
-        Playwright["Playwright E2E & Axe-core Audits"]
-    end
-
-    subgraph Server ["Backend (FastAPI + SQLAlchemy + SQLite)"]
-        Router["FastAPI Application (127.0.0.1:8000)"]
-        DB[(SQLite: pramaan.db)]
-        Engine["RAG Pipeline Engine (Chunking, Indexing, Retrieval)"]
-        Checker["Reliability Detector (Logistic Regression / Features)"]
-        LocalRunner["Local Runner (llama-cpp-python GGUF)"]
-        HWDetect["Hardware Detector (NVML / Metal / CPU)"]
-    end
-
-    subgraph HuggingFace ["Hugging Face Ecosystem"]
-        Hub["Hugging Face Hub API (/api/models)"]
-        Datasets["HF Datasets Server (squad_v2)"]
-        HFRouter["HF Serverless Router (/v1/models)"]
-    end
-
-    UI -->|REST & SSE| Router
-    Router --> DB
-    Router --> Engine
-    Router --> HWDetect
-    Engine --> LocalRunner
-    Engine --> Checker
-    Router -->|Live Metadata| Hub
-    Router -->|Sample Data| Datasets
-    Engine -->|Chat Completions| HFRouter
-```
-
----
-
-## 6. Getting Started Locally
+## 7. Quickstart & Local Installation
 
 ### Prerequisites
-- **Python**: 3.11+ (verified on 3.13)
-- **Node.js**: 18+ (verified on v22)
-- **Hugging Face Account**: Free read token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) (optional for local runner)
+- Python 3.11+ (tested on Python 3.13)
+- Node.js 18+ (tested on Node v22)
 
-### 1. Clone the Repository
-```bash
-git clone https://github.com/Puravshah321/pramaan-ai.git
-cd pramaan-ai
-```
-
-### 2. Backend Setup
+### Backend
 ```bash
 cd backend
 python -m venv .venv
-# Windows:
-.\.venv\Scripts\activate
-# Linux/macOS:
-source .venv/bin/activate
+# Activate virtual environment
+.\.venv\Scripts\activate   # Windows
+source .venv/bin/activate  # macOS / Linux
 
 pip install -r requirements.txt
-```
 
-Create `backend/.env`:
-```env
-HF_TOKEN=hf_your_free_read_token_here
-DATABASE_URL=sqlite+aiosqlite:///./pramaan.db
-LOCAL_RUNNER=true
-```
-
-Start the backend:
-```bash
+# Start backend server
 uvicorn app.main:app --port 8000 --reload
 ```
-The backend API documentation is available at `http://127.0.0.1:8000/docs`.
 
-### 3. Frontend Setup
-In a new terminal:
+### Frontend
 ```bash
 cd frontend
 npm install
 npm run dev
 ```
-Open `http://localhost:5173` in your browser.
+Open `http://localhost:5173`.
 
 ---
 
-## 7. Reproducing the Benchmark & Auditing Runs
+## 8. Verification & Test Suites
 
-To execute a fresh benchmark run or audit past runs directly from the command line:
-
-```bash
-# 1. Audit database runs and mark contaminated runs invalid
-cd backend
-.\.venv\Scripts\python.exe ..\scripts\audit_runs.py
-
-# 2. Re-generate all publication figures, CSVs, and report JSON
-.\.venv\Scripts\python.exe ..\scripts\make_report.py
-```
-
-Outputs are automatically saved to:
-- `docs/figures/*.png`
-- `results/export/benchmark_results.csv`
-- `results/export/pareto_configs.csv`
-- `docs/report_data.json`
-
----
-
-## 8. Automated Test Suite
-
-Run the full verification suite (57 tests passing):
+The test suite validates data integrity, zero heuristic leakage, and accessibility:
 
 ```bash
-# Backend pytest suite (15 tests with coverage)
+# 1. Run diagnostic on Hugging Face token
+python scripts/check_token.py
+
+# 2. Audit all runs in database (marks heuristic fallbacks as invalid)
+python scripts/audit_runs.py
+
+# 3. Backend pytest suite (15 integration & unit tests)
 cd backend
 .\.venv\Scripts\pytest.exe -v
 
-# Frontend Playwright E2E & Accessibility suite (42 tests)
+# 4. Frontend Playwright E2E & Axe accessibility suite (42 tests)
 cd frontend
 npx playwright test
 ```
 
-See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for full test metrics, browser coverage, and axe-core audit outputs.
+---
+
+## 9. Security & Secret Protection
+
+- `HF_TOKEN` resides strictly inside `backend/.env`.
+- Frontend never receives or displays secrets.
+- Zero credentials or tokens are committed to source control.
 
 ---
 
-## 9. License
+## 10. License
 
-This project is licensed under the [MIT License](LICENSE).
+Released under the [MIT License](LICENSE).

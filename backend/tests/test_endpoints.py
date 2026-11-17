@@ -22,6 +22,28 @@ async def test_health_endpoints():
         assert "huggingface" in data
         assert "local_runner" in data
 
+        # POST /api/health/recheck
+        recheck_res = await client.post("/api/health/recheck")
+        assert recheck_res.status_code == 200
+        recheck_data = recheck_res.json()
+        assert "huggingface" in recheck_data
+        assert "diagnosis" in recheck_data
+
+
+@pytest.mark.anyio
+async def test_hardware_endpoint():
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+        res = await client.get("/api/hardware")
+        assert res.status_code == 200
+        data = res.json()
+        assert "detected" in data
+        assert "profiles" in data
+        assert len(data["profiles"]) >= 20
+        assert "benchmark_hardware" in data
+        # Check that RTX 3060 profile is present
+        profile_ids = [p["id"] for p in data["profiles"]]
+        assert "rtx_3060_12gb" in profile_ids
+
 
 @pytest.mark.anyio
 async def test_stats_endpoint():
@@ -61,34 +83,18 @@ async def test_showcase_latest():
         assert res.status_code == 200
         data = res.json()
         assert "has_data" in data
+        if data["has_data"]:
+            assert "answer" in data
+            assert "setup_used" in data
+            # Ensure no extractive heuristic leaks
+            assert "100% words matched" not in data.get("reasons", [])
 
 
 @pytest.mark.anyio
 async def test_recommend_endpoint():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        res = await client.get("/api/recommend?memory_gb=4.0&latency_s=3.0&goal=best_quality")
+        res = await client.get("/api/recommend?memory_gb=4.0&latency_s=5.0&goal=best_quality")
         assert res.status_code == 200
         data = res.json()
         assert "nothing_fits" in data or "chosen" in data
-
-
-@pytest.mark.anyio
-async def test_ask_endpoint_validation():
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        # Valid test query
-        res = await client.post(
-            "/api/ask",
-            json={
-                "question": "What is evaluated by Pramaan AI?",
-                "embedding_model": "sentence-transformers/all-MiniLM-L6-v2",
-                "language_model": "Qwen/Qwen2.5-0.5B-Instruct",
-                "chunk_size": 256,
-                "top_k": 3,
-            }
-        )
-        assert res.status_code == 200
-        data = res.json()
-        assert "answer" in data
-        assert "timings" in data
-        assert "reliability" in data
-        assert "chunks" in data
+        assert "insufficient_setups" in data

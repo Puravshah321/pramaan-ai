@@ -5,6 +5,7 @@ import {
   fetchSetup,
   fetchSetupSuggestions,
   fetchHealth,
+  recheckHealth,
   updateSetup,
   fetchStats,
   fetchLatestShowcase,
@@ -22,6 +23,8 @@ import {
   BarChart2,
   ShieldCheck,
   CheckCircle,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import {
   ScatterChart,
@@ -108,6 +111,28 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
     },
   });
 
+  const [bannerDismissed, setBannerDismissed] = useState(
+    () => sessionStorage.getItem("hf_banner_dismissed") === "true"
+  );
+  const [isRechecking, setIsRechecking] = useState(false);
+
+  const handleRecheck = async () => {
+    setIsRechecking(true);
+    try {
+      await recheckHealth();
+      await queryClient.invalidateQueries({ queryKey: ["health"] });
+    } catch (e) {
+      console.error("Recheck connection failed:", e);
+    } finally {
+      setIsRechecking(false);
+    }
+  };
+
+  const handleDismissBanner = () => {
+    sessionStorage.setItem("hf_banner_dismissed", "true");
+    setBannerDismissed(true);
+  };
+
   const handleSaveSetup = () => {
     updateMutation.mutate({
       embedding_model: activeEmbedding,
@@ -117,42 +142,65 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
 
   return (
     <div className="w-full bg-paper page-transition">
-      {/* Token capability warning if present */}
-      {health?.huggingface?.token_message && (
-        <div className="w-full bg-ochre/15 border-b border-ochre px-4 py-3 text-ink text-xs md:text-sm flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2">
-            <span className="w-2 h-2 rounded-full bg-ochre shrink-0 animate-pulse" />
-            <span className="font-sans">{health.huggingface.token_message}</span>
+      {/* Token capability warning if present (dismissible & recheckable) */}
+      {!bannerDismissed && health?.huggingface?.token_message && (
+        <div className="w-full bg-ochre/15 border-b border-ochre px-4 py-3 text-ink text-xs md:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 overflow-hidden">
+          <div className="flex items-center gap-2 min-w-0 max-w-full">
+            <span className="w-2.5 h-2.5 rounded-full bg-ochre shrink-0 animate-pulse" />
+            <span className="font-sans font-medium text-xs break-words">{health.huggingface.token_message}</span>
           </div>
-          <div className="flex items-center gap-4 font-mono text-xs font-semibold">
+          <div className="flex items-center gap-2.5 font-mono text-xs font-semibold flex-wrap">
+            <button
+              type="button"
+              onClick={handleRecheck}
+              disabled={isRechecking}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-paper border border-ochre/40 rounded text-ink hover:border-ink transition-colors disabled:opacity-50"
+            >
+              {isRechecking ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+              ) : (
+                <RefreshCw className="w-3.5 h-3.5 text-ink-soft" />
+              )}
+              <span>{isRechecking ? "Checking..." : "Re-check connection"}</span>
+            </button>
+            {health.huggingface.billing_url && (
+              <a
+                href={health.huggingface.billing_url}
+                target="_blank"
+                rel="noreferrer"
+                className="underline text-accent hover:opacity-80"
+              >
+                Billing / Credits ↗
+              </a>
+            )}
             <a
               href={health.huggingface.tokens_url || "https://huggingface.co/settings/tokens"}
               target="_blank"
               rel="noreferrer"
               className="underline text-ink hover:text-accent"
             >
-              Hugging Face Tokens ↗
+              Tokens ↗
             </a>
-            <a
-              href={health.huggingface.providers_url || "https://huggingface.co/settings/inference-providers"}
-              target="_blank"
-              rel="noreferrer"
-              className="underline text-ink hover:text-accent"
+            <button
+              type="button"
+              onClick={handleDismissBanner}
+              className="p-1 text-ink-soft hover:text-ink transition-colors ml-1"
+              aria-label="Dismiss banner"
             >
-              Inference Providers ↗
-            </a>
+              <X className="w-4 h-4" />
+            </button>
           </div>
         </div>
       )}
 
-      {/* 2. HERO: Full-width black band, min-height calc(100vh - 72px) */}
-      <section className="w-full bg-[#141210] text-paper min-h-[calc(100vh-72px)] flex items-center py-12 md:py-20 border-b border-[#201D1A]">
-        <div className="max-w-[1160px] mx-auto px-4 w-full grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
+      {/* 2. HERO: Full-width black band, content-fit min-height 560px */}
+      <section className="w-full bg-[#141210] text-paper min-h-[560px] flex items-center py-10 md:py-14 border-b border-[#201D1A]">
+        <div className="max-w-[1160px] mx-auto px-4 w-full grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-14 items-center">
           {/* Left Column (7 cols on lg) */}
-          <div className="lg:col-span-7 space-y-8">
+          <div className="lg:col-span-7 space-y-6">
             <h1
-              className="font-serif font-semibold text-paper leading-[1.02] tracking-[-0.02em]"
-              style={{ fontSize: "clamp(48px, 6.5vw, 92px)" }}
+              className="font-serif font-semibold text-paper leading-[1.04] tracking-[-0.02em]"
+              style={{ fontSize: "clamp(44px, 5.5vw, 76px)" }}
             >
               Know which answers to <span className="text-accent">trust</span>, and what they cost.
             </h1>
@@ -566,7 +614,7 @@ const LiveEvidenceCard: React.FC<{ showcase?: ShowcaseData }> = ({ showcase }) =
 
       {/* Caption under card */}
       <div className="text-right text-[11px] font-mono text-sage/70">
-        Setup: {showcase.setup_used || "default"}
+        Answered by {showcase.setup_used || "model"}
       </div>
     </div>
   );
