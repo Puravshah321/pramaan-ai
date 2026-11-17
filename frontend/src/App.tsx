@@ -1,78 +1,72 @@
-import React, { useEffect } from 'react'
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom'
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { useAppStore } from '@/lib/store'
-import { Sidebar } from '@/components/Sidebar'
-import { Header } from '@/components/Header'
+import React, { useState } from "react";
+import { BrowserRouter as Router, Routes, Route, Navigate } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Header } from "./components/Header";
+import { Footer } from "./components/Footer";
+import { Tour } from "./components/Tour";
+import { HelpDrawer } from "./components/HelpDrawer";
 
-// Pages
-import { Dashboard } from '@/pages/Dashboard'
-import { CorpusPage } from '@/pages/CorpusPage'
-import { ExperimentsPage } from '@/pages/ExperimentsPage'
-import { MonitorPage } from '@/pages/MonitorPage'
-import { PlaygroundPage } from '@/pages/PlaygroundPage'
-import { ResultsPage } from '@/pages/ResultsPage'
-import { ParetoPage } from '@/pages/ParetoPage'
-import { ReliabilityPage } from '@/pages/ReliabilityPage'
-import { ReproPage } from '@/pages/ReproPage'
-import { SettingsPage } from '@/pages/SettingsPage'
+// 7 Pages
+import { Home } from "./pages/Home";
+import { Guide } from "./pages/Guide";
+import { Models } from "./pages/Models";
+import { Benchmark } from "./pages/Benchmark";
+import { Results } from "./pages/Results";
+import { Recommend } from "./pages/Recommend";
+import { TryIt } from "./pages/TryIt";
 
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
-      staleTime: 1000 * 60 * 5, // 5 minutes
-      retry: 1,
+      staleTime: 1000 * 60 * 5, // 5 minutes cache
+      refetchOnWindowFocus: false,
     },
   },
-})
+});
 
-export default function App() {
-  const { theme } = useAppStore()
+export function App() {
+  const [isTourOpen, setIsTourOpen] = useState(() => {
+    return !localStorage.getItem("pramaan_tour_seen");
+  });
+  const [isHelpOpen, setIsHelpOpen] = useState(false);
 
-  useEffect(() => {
-    // Apply dark / light class to root
-    const root = document.documentElement
-    if (theme === 'dark') {
-      root.classList.add('dark')
-      root.classList.remove('light')
-    } else {
-      root.classList.add('light')
-      root.classList.remove('dark')
-    }
-  }, [theme])
+  const handleCloseTour = () => {
+    setIsTourOpen(false);
+    localStorage.setItem("pramaan_tour_seen", "true");
+  };
 
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <div className="flex h-screen w-screen overflow-hidden bg-[var(--color-bg)] text-[var(--color-text)]">
-          {/* Collapsible Left Navigation Bar */}
-          <Sidebar />
+      <Router>
+        <div className="min-h-screen flex flex-col bg-paper text-ink font-body">
+          <Header onOpenHelp={() => setIsHelpOpen(true)} />
 
-          {/* Main App Content Area */}
-          <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
-            {/* Top Bar with Demo Ribbon and Telemetry */}
-            <Header />
+          <main className="flex-1">
+            <Routes>
+              <Route path="/" element={<Home onStartTour={() => setIsTourOpen(true)} />} />
+              <Route path="/guide" element={<Guide />} />
+              <Route path="/models" element={<Models />} />
+              <Route path="/benchmark" element={<Benchmark />} />
+              <Route path="/results" element={<Results />} />
+              <Route path="/recommend" element={<Recommend />} />
+              <Route path="/try-it" element={<TryIt />} />
+              <Route path="*" element={<Navigate to="/" replace />} />
+            </Routes>
+          </main>
 
-            {/* Scrollable Viewport */}
-            <main className="flex-1 overflow-y-auto">
-              <Routes>
-                <Route path="/" element={<Dashboard />} />
-                <Route path="/corpus" element={<CorpusPage />} />
-                <Route path="/experiments" element={<ExperimentsPage />} />
-                <Route path="/monitor" element={<MonitorPage />} />
-                <Route path="/playground" element={<PlaygroundPage />} />
-                <Route path="/results" element={<ResultsPage />} />
-                <Route path="/pareto" element={<ParetoPage />} />
-                <Route path="/reliability" element={<ReliabilityPage />} />
-                <Route path="/repro" element={<ReproPage />} />
-                <Route path="/settings" element={<SettingsPage />} />
-                {/* Fallback */}
-                <Route path="*" element={<Navigate to="/" replace />} />
-              </Routes>
-            </main>
-          </div>
+          <Footer />
+
+          {/* Tour and Help Drawer */}
+          <Tour isOpen={isTourOpen} onClose={handleCloseTour} />
+          <HelpDrawer
+            isOpen={isHelpOpen}
+            onClose={() => setIsHelpOpen(false)}
+            onStartTour={() => setIsTourOpen(true)}
+          />
         </div>
-      </BrowserRouter>
+      </Router>
     </QueryClientProvider>
-  )
+  );
 }
+
+export default App;

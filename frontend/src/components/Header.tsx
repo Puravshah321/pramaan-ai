@@ -1,140 +1,115 @@
-import React, { useEffect, useState } from 'react'
-import {
-  Activity, ShieldAlert, Sun, Moon, Cpu, HardDrive,
-  CheckCircle2, AlertTriangle, Play, Sparkles
-} from 'lucide-react'
-import { useAppStore } from '@/lib/store'
-import { getSystemInfo, getTelemetry } from '@/lib/api'
+import React, { useState } from "react";
+import { Link, useLocation } from "react-router-dom";
+import { SetupChip } from "./SetupChip";
+import { Menu, X, HelpCircle } from "lucide-react";
 
-export function Header() {
-  const {
-    demoMode,
-    theme,
-    toggleTheme,
-    activeHardware,
-    setActiveHardware,
-    sidebarCollapsed
-  } = useAppStore()
+interface HeaderProps {
+  onOpenHelp?: () => void;
+}
 
-  const [telemetry, setTelemetry] = useState<{
-    cpu_percent?: number
-    ram_used_gb?: number
-    ram_total_gb?: number
-    ram_percent?: number
-  }>({
-    cpu_percent: 18,
-    ram_used_gb: 4.2,
-    ram_total_gb: 16.0,
-    ram_percent: 26.25,
-  })
+const NAV_ITEMS = [
+  { name: "Home", path: "/" },
+  { name: "Guide", path: "/guide" },
+  { name: "Models", path: "/models" },
+  { name: "Benchmark", path: "/benchmark" },
+  { name: "Results", path: "/results" },
+  { name: "Recommend", path: "/recommend" },
+  { name: "Try It", path: "/try-it" },
+];
 
-  const [status, setStatus] = useState<'healthy' | 'warning' | 'error'>('healthy')
-
-  useEffect(() => {
-    let isMounted = true
-    const fetchStats = async () => {
-      try {
-        const data = await getTelemetry()
-        if (isMounted && data) {
-          setTelemetry(data)
-          setStatus('healthy')
-        }
-      } catch {
-        // Fallback or demo values
-        if (isMounted) {
-          setStatus('healthy')
-        }
-      }
-    }
-
-    fetchStats()
-    const timer = setInterval(fetchStats, 5000)
-    return () => {
-      isMounted = false
-      clearInterval(timer)
-    }
-  }, [])
+export const Header: React.FC<HeaderProps> = ({ onOpenHelp }) => {
+  const location = useLocation();
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   return (
-    <header className="header-bar bg-[var(--color-surface)] border-b border-[var(--color-border)] sticky top-0 z-30 px-6 py-3 flex flex-col gap-2">
-      {/* Demo Mode Ribbon Banner */}
-      {demoMode && (
-        <div className="demo-ribbon bg-amber-500/15 border border-amber-500/30 text-amber-300 text-xs px-3 py-1.5 rounded-md flex items-center justify-between">
-          <div className="flex items-center gap-2 font-medium">
-            <ShieldAlert size={14} className="text-amber-400 animate-pulse" />
-            <span>DEMO MODE ACTIVE: All shown numbers and verdicts are simulated for demonstration.</span>
-          </div>
-          <span className="text-[10px] bg-amber-500/20 px-2 py-0.5 rounded text-amber-200">
-            Isolated DB: demo.db
+    <header className="sticky top-0 z-50 w-full h-[72px] border-b border-line bg-paper/95 backdrop-blur-sm">
+      <div className="max-w-[1160px] mx-auto px-4 h-[72px] flex items-center justify-between gap-4">
+        {/* Left: Logo & Brand */}
+        <Link to="/" className="flex items-center gap-2 shrink-0 group">
+          <span className="w-5 h-5 bg-accent rounded-sm inline-flex items-center justify-center text-paper-raised text-xs font-bold leading-none select-none">
+            ◼
           </span>
-        </div>
-      )}
+          <span className="font-serif font-bold text-xl text-ink tracking-tight">
+            Pramaan AI
+          </span>
+        </Link>
 
-      <div className="flex items-center justify-between">
-        {/* Left: System Status & Hardware Profile */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)]">
-            <span
-              className={`w-2 h-2 rounded-full ${
-                status === 'healthy' ? 'bg-emerald-400' : 'bg-amber-400'
-              }`}
-            />
-            <span className="font-medium text-[var(--color-text)]">Pramaan Engine</span>
-            <span className="text-[10px] bg-[var(--color-surface-raised)] border border-[var(--color-border)] px-1.5 py-0.5 rounded font-mono">
-              v0.1.0
-            </span>
+        {/* Centre: Navigation (Desktop, >= 820px) */}
+        <nav className="hidden min-[820px]:flex items-center gap-1">
+          {NAV_ITEMS.map((item) => {
+            const isActive = location.pathname === item.path;
+            return (
+              <Link
+                key={item.path}
+                to={item.path}
+                className={`px-3 py-1.5 text-sm font-medium rounded-md transition-colors ${
+                  isActive
+                    ? "text-accent bg-paper-raised font-semibold border-b-2 border-accent"
+                    : "text-ink hover:text-accent hover:bg-paper-raised/60"
+                }`}
+              >
+                {item.name}
+              </Link>
+            );
+          })}
+        </nav>
+
+        {/* Right: Active setup chip & Help button */}
+        <div className="flex items-center gap-2 shrink-0">
+          <div className="hidden sm:block">
+            <SetupChip />
           </div>
 
-          <div className="h-4 w-px bg-[var(--color-border)]" />
-
-          {/* Hardware Profile Selector */}
-          <div className="flex items-center gap-2 text-xs">
-            <Cpu size={14} className="text-[var(--color-primary)]" />
-            <span className="text-[var(--color-text-muted)]">Target Hardware:</span>
-            <select
-              value={activeHardware}
-              onChange={(e) => setActiveHardware(e.target.value)}
-              className="bg-[var(--color-surface-raised)] border border-[var(--color-border)] text-[var(--color-text)] rounded px-2 py-1 text-xs font-medium focus:outline-none focus:border-[var(--color-primary)]"
-            >
-              <option value="GTX1650-4GB">GTX 1650 (4 GB VRAM, 16 GB RAM)</option>
-              <option value="RTX3060-6GB">RTX 3060 (6 GB VRAM, 16 GB RAM)</option>
-              <option value="Apple-M2-16GB">Apple M2 (16 GB Unified)</option>
-              <option value="CPU-Only-8GB">CPU-Only (8 GB RAM)</option>
-            </select>
-          </div>
-        </div>
-
-        {/* Right: Telemetry & Actions */}
-        <div className="flex items-center gap-3">
-          {/* Live Resource Telemetry Pills */}
-          <div className="hidden md:flex items-center gap-2 text-xs bg-[var(--color-surface-raised)] px-3 py-1.5 rounded-lg border border-[var(--color-border)] font-mono">
-            <div className="flex items-center gap-1.5">
-              <Activity size={13} className="text-cyan-400" />
-              <span className="text-[var(--color-text-muted)]">CPU:</span>
-              <span className="text-[var(--color-text)] font-semibold">
-                {telemetry.cpu_percent ? `${telemetry.cpu_percent.toFixed(0)}%` : '22%'}
-              </span>
-            </div>
-            <div className="h-3 w-px bg-[var(--color-border)]" />
-            <div className="flex items-center gap-1.5">
-              <HardDrive size={13} className="text-indigo-400" />
-              <span className="text-[var(--color-text-muted)]">RAM:</span>
-              <span className="text-[var(--color-text)] font-semibold">
-                {telemetry.ram_used_gb ? `${telemetry.ram_used_gb.toFixed(1)} GB` : '4.2 GB'}
-              </span>
-            </div>
-          </div>
-
-          {/* Theme Toggle */}
           <button
-            onClick={toggleTheme}
-            className="p-2 rounded-lg border border-[var(--color-border)] bg-[var(--color-surface-raised)] text-[var(--color-text-muted)] hover:text-[var(--color-text)] hover:border-[var(--color-primary)] transition-colors"
-            title={`Switch to ${theme === 'dark' ? 'light' : 'dark'} mode`}
+            type="button"
+            onClick={onOpenHelp}
+            className="p-2 rounded-lg text-ink hover:text-accent hover:bg-paper-raised transition-colors focus-visible:outline-2 focus-visible:outline-accent"
+            title="Open page guide and tips"
+            aria-label="Open page guide"
           >
-            {theme === 'dark' ? <Sun size={15} /> : <Moon size={15} />}
+            <HelpCircle className="w-5 h-5" />
+          </button>
+
+          {/* Mobile hamburger button (< 820px) */}
+          <button
+            type="button"
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="min-[820px]:hidden p-2 rounded-lg text-ink hover:text-accent hover:bg-paper-raised transition-colors"
+            aria-label="Toggle navigation menu"
+          >
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
           </button>
         </div>
       </div>
+
+      {/* Mobile navigation drawer */}
+      {mobileMenuOpen && (
+        <div className="min-[820px]:hidden border-b border-line bg-paper-raised px-4 pt-2 pb-4 space-y-2">
+          <div className="pb-2 border-b border-line sm:hidden">
+            <span className="text-xs text-ink-soft block mb-1">Active Setup:</span>
+            <SetupChip />
+          </div>
+          <nav className="flex flex-col gap-1">
+            {NAV_ITEMS.map((item) => {
+              const isActive = location.pathname === item.path;
+              return (
+                <Link
+                  key={item.path}
+                  to={item.path}
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`px-3 py-2 text-base font-medium rounded-md transition-colors ${
+                    isActive
+                      ? "text-accent bg-paper font-semibold border-l-4 border-accent"
+                      : "text-ink hover:text-accent hover:bg-paper"
+                  }`}
+                >
+                  {item.name}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+      )}
     </header>
-  )
-}
+  );
+};
