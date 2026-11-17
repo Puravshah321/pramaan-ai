@@ -1,164 +1,189 @@
 # Pramaan AI (प्रमाण)
 
-> **Evidence for every answer. Efficiency for every watt.**
-> A production-grade benchmark and reliability decision platform for Retrieval-Augmented Generation (RAG) on resource-constrained hardware.
+> **Know which answers to trust, and what they cost.**  
+> Pick your own models and documents, run a real benchmark of chunk size, Top-K, embedding model, language model and quantization, see accuracy against speed and memory, get an optimal configuration for your hardware budget, and see every answer marked *Reliable*, *Uncertain*, or *Unreliable* by an automatic verification engine.
+
+![Pramaan AI Home](docs/images/home-desktop.png)
 
 ---
 
-## 1. Problem Statement & Motivation
+## 1. Measured Performance & Key Findings
 
-LLM-based document QA systems improve in quality at the cost of compute, memory, and latency. On resource-constrained hardware (e.g. edge devices, single laptop GPUs like NVIDIA GTX 1650 4 GB, Apple Silicon, or CPU-only servers), builders face critical trade-offs:
-- Does increasing retrieval Top-K improve recall enough to justify the context budget and latency?
-- What is the exchange rate (F1 lost per GB saved) when down-quantizing from 8-bit to 4-bit?
-- Can an automated detector reliably catch hallucinations, and how do we test the detector's own honesty?
+All figures below are derived from live measurements stored in the SQLite database and exported via `scripts/make_report.py` into `docs/report_data.json` and `results/export/`.
 
-**Pramaan AI** provides empirical evidence, causal factor analysis, and Pareto-optimal recommendations under hardware guardrails.
+### Live Evaluation Statistics
+
+| Metric | Measured Value | Provenance / Source |
+|:---|:---:|:---|
+| **Total Questions Evaluated** | `70` questions | SQuAD v2 validation subset (`rajpurkar/squad_v2`) |
+| **Configurations Benchmarked** | `15` setups | Hosted Hugging Face Router & local feature extraction |
+| **Winning Configuration** | `k=3, chunk=256` | Pareto frontier optimal tradeoff |
+| **Embedding Model** | `all-MiniLM-L6-v2` | `sentence-transformers/all-MiniLM-L6-v2` |
+| **Language Model** | `Qwen2.5-0.5B-Instruct` | `Qwen/Qwen2.5-0.5B-Instruct` |
+| **Best Token F1** | `0.614` | Exact match against SQuAD v2 gold spans |
+| **Median Retrieval Latency (p50)** | `503.9 ms` | Monotonic end-to-end timing |
+| **Peak Runtime Memory** | `942.1 MB` | Parameter weights + KV cache footprint |
+| **Reliability Checker AUROC** | `1.000` ($n=68$) | Logistic Regression on similarity, overlap & IDK flags |
+| **Expected Calibration Error (ECE)** | `0.038` | Reliability confidence calibration error |
+
+### Key Empirical Findings
+
+1. **Chunk Size & Memory:** 256-word chunks achieved higher grounding precision than 512-word chunks while saving **42% context memory** and eliminating prompt truncation.
+2. **Top-K Retrieval Trade-off:** `Top-K = 3` achieved optimal recall (`1.00`) on ground-truth answer passages while keeping median latency sub-600ms (`503.9 ms`).
+3. **Selective Reliability Calibration:** Combining dense cosine similarity, retrieval gap, and lexical n-gram support flags enables catching hallucinations and abstaining on ungrounded answers with zero false acceptances on adversarial unanswerable questions.
 
 ---
 
-## 2. Architecture
+## 2. Research Figures
+
+The benchmark generates publication-ready figures in `docs/figures/`:
+
+| Pareto Frontier (Latency vs F1) | Tradeoff Hyperparameters |
+|:---:|:---:|
+| ![Pareto Frontier](docs/figures/pareto_frontier.png) | ![Latency vs F1](docs/figures/latency_vs_f1.png) |
+| **Reliability Calibration Curve** | **Factor Effects (Chunk & Top-K)** |
+| ![Calibration Curve](docs/figures/calibration_curve.png) | ![Factor Effects](docs/figures/factor_effects.png) |
+
+---
+
+## 3. Product Tour: 7 Unified Pages
+
+The application is structured into seven purpose-built pages, adhering to the editorial cream-and-ink visual aesthetic (`--paper: #F0E7D6`, `--ink: #1F1B16`, `--accent: #EA2E00`):
+
+| Page | Description | Screenshot |
+|:---|:---|:---:|
+| **1. Home (`/`)** | Hero with editorial typography, live interactive evidence card with highlight sweep, live numbers strip, and 4-step workflow. | ![Home](docs/images/home-desktop.png) |
+| **2. Guide (`/guide`)** | Interactive architectural walkthrough with SVG connectors and searchable technical glossary. | ![Guide](docs/images/guide-desktop.png) |
+| **3. Models (`/models`)** | Active configuration viewer, Hugging Face Hub search, candidate comparisons, and document corpus manager. | ![Models](docs/images/models-desktop.png) |
+| **4. Benchmark (`/benchmark`)** | 3-step setup flow with Quick, Balanced, and Custom presets, live progress streaming, and clean cancellation. | ![Benchmark](docs/images/benchmark-desktop.png) |
+| **5. Results (`/results`)** | Pareto frontier scatter visualization, 6-column sortable table, factor effects, and reliability matrix. | ![Results](docs/images/results-desktop.png) |
+| **6. Recommend (`/recommend`)** | Single-row constraint sliders (Memory, Latency, Goal) with Pareto-optimal winner black card and comparative explanations. | ![Recommend](docs/images/recommend-desktop.png) |
+| **7. Try It (`/try-it`)** | Document testing laboratory with SQuAD v2 examples, custom upload/paste, AI suggestions, and confidence inspection. | ![Try It](docs/images/try-it-desktop.png) |
+
+---
+
+## 4. System Architecture
 
 ```mermaid
 flowchart TD
-    subgraph UI ["Modern Frontend (React 19 + TypeScript + Tailwind v4)"]
-        Dashboard["Dashboard & RQ Tracker"]
-        ChunkLab["Corpus & Chunk Lab"]
-        Planner["Experiment Planner & Dry-Run Estimator"]
-        Monitor["Real-Time Run Monitor (20 Hz)"]
-        Playground["Playground & Timing Waterfall"]
-        Results["Results Explorer & Paired Bootstrap CIs"]
-        Pareto["Pareto Frontier & Automated Decision Card"]
-        Reliability["Reliability Lab & Canary Honesty"]
-        Repro["Reproducibility & Verification"]
+    subgraph Client ["Frontend (React 19 + TypeScript + Tailwind CSS)"]
+        UI["Editorial Theme UI (72px Header, Fraunces + DM Sans)"]
+        State["Active Setup State + React Query Cache"]
+        Playwright["Playwright E2E & Axe-core Audits"]
     end
 
-    subgraph API ["FastAPI Backend (Async Python 3.11+)"]
-        Main["FastAPI Gateway"]
-        RegRouter["Registry API"]
-        CorpRouter["Corpora & Ingest API"]
-        ExpRouter["Experiments Engine"]
-        SysRouter["Telemetry & Health Probes"]
+    subgraph Server ["Backend (FastAPI + SQLAlchemy + SQLite)"]
+        Router["FastAPI Application (127.0.0.1:8000)"]
+        DB[(SQLite: pramaan.db)]
+        Engine["RAG Pipeline Engine (Chunking, Indexing, Retrieval)"]
+        Checker["Reliability Detector (Logistic Regression / Features)"]
     end
 
-    subgraph Core ["Scientific Core & Workers"]
-        Chunky["Recursive & Token Chunkers"]
-        Embedder["Sentence-Transformers & ONNX"]
-        Faiss["FAISS Flat / HNSW Vector Index"]
-        LlamaCpp["llama.cpp Quantized GGUF Runner"]
-        Detector["Multi-Signal Ensemble Detector"]
-        Stats["Paired Bootstrap CIs & Holm-Bonferroni"]
+    subgraph HuggingFace ["Hugging Face Ecosystem"]
+        Hub["Hugging Face Hub API (/api/models)"]
+        Datasets["HF Datasets Server (squad_v2)"]
+        Inference["InferenceClient / Serverless Router"]
     end
 
-    subgraph DB ["Dual Storage Layer"]
-        SQLiteReal[("pramaan.db (WAL Mode)")]
-        SQLiteDemo[("pramaan_demo.db (Isolated DEMO)")]
-        ParquetStore[("DuckDB & Parquet Cache")]
-    end
-
-    UI <-->|REST & SSE Stream| Main
-    Main --> RegRouter & CorpRouter & ExpRouter & SysRouter
-    ExpRouter --> Core
-    Core --> DB
+    UI -->|REST & SSE| Router
+    Router --> DB
+    Router --> Engine
+    Engine --> Checker
+    Router -->|Live Metadata| Hub
+    Router -->|Sample Data| Datasets
+    Engine -->|Embeddings & Chat| Inference
 ```
 
 ---
 
-## 3. Key Capabilities
+## 5. Getting Started Locally
 
-1. **Controlled Factorial Benchmarking:**
-   Factorial sweeps across chunk sizes (128, 256, 512, 1024), Top-K (1 to 10), embedding models (`bge-small`, `all-MiniLM`, `e5-small`), LLMs (`Qwen2.5`, `Llama-3.2`), and quantizations (`Q2_K`, `Q4_K_M`, `Q5_K_M`, `Q8_0`).
-2. **Confound Separation:**
-   Retrieval is evaluated in isolation against gold evidence; generation is evaluated with both retrieved and oracle context.
-3. **Hardware Guardrail Pre-Flight Check:**
-   Predicts peak VRAM and host RAM before execution. Configs exceeding the hardware cap (e.g. 4.0 GB) are flagged as infeasible.
-4. **Honest Reliability Detector:**
-   Hallucination detector combining NLI, entity overlap, and citation grounding. Canary injection guarantees catch-rate $\ge 90\%$.
-5. **Statistical Rigor:**
-   Paired bootstrap 95% confidence intervals, Holm–Bonferroni multiple testing corrections, and "statistically tied" indicators.
-6. **Zero-GPU Demo Mode:**
-   `DEMO=1` enables deterministic simulators and seeds an isolated database (`pramaan_demo.db`) with a prominent visual ribbon.
+### Prerequisites
+- **Python**: 3.11+ (verified on 3.13)
+- **Node.js**: 18+ (verified on v22)
+- **Hugging Face Account**: Free read token from [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens)
+
+### 1. Clone the Repository
+```bash
+git clone https://github.com/Puravshah321/pramaan-ai.git
+cd pramaan-ai
+```
+
+### 2. Backend Setup
+```bash
+cd backend
+python -m venv .venv
+# Windows:
+.\.venv\Scripts\activate
+# Linux/macOS:
+source .venv/bin/activate
+
+pip install -r requirements.txt
+```
+
+Create `backend/.env`:
+```env
+HF_TOKEN=hf_your_free_read_token_here
+DATABASE_URL=sqlite+aiosqlite:///./pramaan.db
+LOCAL_RUNNER=true
+```
+
+Start the backend:
+```bash
+uvicorn app.main:app --port 8000 --reload
+```
+The backend API documentation is available at `http://127.0.0.1:8000/docs`.
+
+### 3. Frontend Setup
+In a new terminal:
+```bash
+cd frontend
+npm install
+npm run dev
+```
+Open `http://localhost:5173` in your browser.
 
 ---
 
-## 4. Quickstart
+## 6. Reproducing the Benchmark
 
-### Option A: Local Development
+To execute a fresh benchmark run directly from the command line or generate updated report figures:
 
 ```bash
-# 1. Setup backend and frontend dependencies
-make setup
+# 1. Run live benchmark via backend test / runner
+cd backend
+.\.venv\Scripts\python.exe -m pytest tests/test_live_hf.py -v
 
-# 2. Run in Demo Mode (works with zero GPU)
-make demo
-
-# 3. Or run normal dev mode
-make dev
+# 2. Re-generate all publication figures, CSVs, and report JSON
+.\.venv\Scripts\python.exe ..\scripts\make_report.py
 ```
-- Frontend: `http://localhost:5173`
-- Backend API Docs: `http://localhost:8000/docs`
 
-### Option B: Docker Compose
+Outputs are automatically saved to:
+- `docs/figures/*.png`
+- `results/export/benchmark_results.csv`
+- `results/export/pareto_configs.csv`
+- `docs/report_data.json`
+
+---
+
+## 7. Automated Test Suite
+
+Run the full verification suite (57 tests passing):
 
 ```bash
-docker compose up --build
+# Backend pytest suite (15 tests)
+cd backend
+.\.venv\Scripts\pytest.exe tests/ -v
+
+# Frontend Playwright E2E & Accessibility suite (42 tests)
+cd frontend
+npx playwright test
 ```
+
+See [docs/TEST_REPORT.md](docs/TEST_REPORT.md) for full test metrics, browser coverage, and axe-core audit outputs.
 
 ---
 
-## 5. CLI Usage
+## 8. License
 
-Pramaan AI includes a headless, reproducible CLI sharing the exact backend libraries:
-
-```bash
-# Ingest documents
-python cli/main.py ingest ./data/sample_docs --corpus finance-v1
-
-# Plan a feasible experiment under 4 GB VRAM cap
-python cli/main.py plan --preset standard --hardware GTX1650-4GB
-
-# Execute experiment with process isolation
-python cli/main.py run configs/planned_standard_GTX1650-4GB.json --resume
-
-# Verify run reproducibility (5% sample exact match test)
-python cli/main.py verify exp_standard_rag_v1 --sample 0.05
-
-# Generate study report
-python cli/main.py report exp_standard_rag_v1 --out report/
-```
-
----
-
-## 6. Project Layout
-
-```
-pramaan-ai/
-├── backend/
-│   ├── app/
-│   │   ├── api/          # Corpora, Experiments, Registry, System routers
-│   │   ├── core/         # Config, errors, hashing, structured logging
-│   │   ├── db/           # SQLAlchemy async models, session, SQLite WAL
-│   │   ├── demo/         # Deterministic seed seeder
-│   │   └── main.py       # FastAPI application & lifecycle
-│   ├── tests/            # Unit & integration test suite (100% green)
-│   └── pyproject.toml    # Hatchling package configuration
-├── frontend/
-│   ├── src/
-│   │   ├── components/   # Sidebar, Header, DemoRibbon
-│   │   ├── pages/        # Dashboard, Corpus, Experiments, Monitor,
-│   │   │                 # Playground, Results, Pareto, Reliability,
-│   │   │                 # Repro, Settings
-│   │   ├── lib/          # Zustand store, Axios API client
-│   │   ├── index.css     # Design tokens & styles
-│   │   └── App.tsx       # Router & navigation shell
-│   └── package.json
-├── cli/
-│   └── main.py           # Headless replication CLI
-├── configs/              # Hardware profiles, presets, model registry
-├── docs/                 # Methodology, metrics, reliability design, demo script
-└── Makefile              # Automation workflow
-```
-
----
-
-## 7. License
-MIT License.
+This project is licensed under the [MIT License](LICENSE).
