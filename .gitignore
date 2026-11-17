@@ -28,7 +28,19 @@ htmlcov/
 .mypy_cache/
 .ruff_cache/
 
+# Environment & Secrets
+.env
+backend/.env
+*.env
+*.env.local
+
 # Databases & local data
+*.db
+*.db-wal
+*.db-shm
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
 data/*.db
 data/*.db-wal
 data/*.db-shm
@@ -45,6 +57,10 @@ data/corpora/*
 frontend/node_modules/
 frontend/dist/
 frontend/.vite/
+frontend/test-results/
+frontend/playwright-report/
+test-results/
+playwright-report/
 *.local
 
 # OS
