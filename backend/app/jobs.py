@@ -130,11 +130,14 @@ async def execute_run_task(
             est_mem_gb = model_info.get("estimated_memory_gb") or 1.0
             est_mem_mb = est_mem_gb * 1024.0
             mem_source = "estimated"
-            if cfg_dict.get("runner_type") == "local":
-                real_mem = measure_process_memory_mb()
-                if real_mem > 0:
-                    est_mem_mb = real_mem
-                    mem_source = "measured"
+            runner_type = cfg_dict.get("runner_type") or "hosted"
+            quantization = cfg_dict.get("quantization", "none")
+
+            if runner_type == "local":
+                from app.runners.local import get_current_memory_mb
+                mem_now = get_current_memory_mb()
+                est_mem_mb = max(mem_now["rss_mb"], mem_now["vram_mb"])
+                mem_source = "measured"
 
             config_f1s = []
             config_ems = []
@@ -159,6 +162,8 @@ async def execute_run_task(
                     top_k=top_k,
                     question=q_text,
                     gold_answer=gold_ans,
+                    runner_type=runner_type,
+                    quantization=quantization,
                 )
 
                 if result.get("error"):

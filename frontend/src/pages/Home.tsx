@@ -3,6 +3,8 @@ import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchSetup,
+  fetchSetupSuggestions,
+  fetchHealth,
   updateSetup,
   fetchStats,
   fetchLatestShowcase,
@@ -40,9 +42,19 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
   const queryClient = useQueryClient();
 
   // Queries
+  const { data: health } = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+  });
+
   const { data: setup } = useQuery({
     queryKey: ["setup"],
     queryFn: fetchSetup,
+  });
+
+  const { data: suggestions } = useQuery({
+    queryKey: ["setupSuggestions"],
+    queryFn: fetchSetupSuggestions,
   });
 
   const { data: stats } = useQuery({
@@ -57,13 +69,13 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
 
   const { data: pastRuns } = useQuery({
     queryKey: ["runs"],
-    queryFn: fetchRuns,
+    queryFn: () => fetchRuns(false),
   });
 
   const latestRunId = pastRuns?.find((r: any) => r.status === "completed")?.id;
   const { data: runResults } = useQuery({
     queryKey: ["latestResults", latestRunId],
-    queryFn: () => fetchResults(latestRunId),
+    queryFn: () => fetchResults(latestRunId, false),
     enabled: !!latestRunId,
   });
 
@@ -73,14 +85,14 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
     setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"
   );
   const [activeLanguage, setActiveLanguage] = useState(
-    setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"
+    setup?.language_model || ""
   );
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     if (setup) {
-      setActiveEmbedding(setup.embedding_model);
-      setActiveLanguage(setup.language_model);
+      if (setup.embedding_model) setActiveEmbedding(setup.embedding_model);
+      if (setup.language_model) setActiveLanguage(setup.language_model);
     }
   }, [setup]);
 
@@ -105,6 +117,34 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
 
   return (
     <div className="w-full bg-paper page-transition">
+      {/* Token capability warning if present */}
+      {health?.huggingface?.token_message && (
+        <div className="w-full bg-ochre/15 border-b border-ochre px-4 py-3 text-ink text-xs md:text-sm flex items-center justify-between flex-wrap gap-2">
+          <div className="flex items-center gap-2">
+            <span className="w-2 h-2 rounded-full bg-ochre shrink-0 animate-pulse" />
+            <span className="font-sans">{health.huggingface.token_message}</span>
+          </div>
+          <div className="flex items-center gap-4 font-mono text-xs font-semibold">
+            <a
+              href={health.huggingface.tokens_url || "https://huggingface.co/settings/tokens"}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-ink hover:text-accent"
+            >
+              Hugging Face Tokens ↗
+            </a>
+            <a
+              href={health.huggingface.providers_url || "https://huggingface.co/settings/inference-providers"}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-ink hover:text-accent"
+            >
+              Inference Providers ↗
+            </a>
+          </div>
+        </div>
+      )}
+
       {/* 2. HERO: Full-width black band, min-height calc(100vh - 72px) */}
       <section className="w-full bg-[#141210] text-paper min-h-[calc(100vh-72px)] flex items-center py-12 md:py-20 border-b border-[#201D1A]">
         <div className="max-w-[1160px] mx-auto px-4 w-full grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-16 items-center">
@@ -139,17 +179,35 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
 
             {/* Active Setup line */}
             <div className="pt-4 text-xs font-sans text-sage/80 flex items-center gap-2 flex-wrap">
-              <span>
-                Using <span className="font-mono text-paper">{setup?.embedding_model || "all-MiniLM-L6-v2"}</span> and{" "}
-                <span className="font-mono text-paper">{setup?.language_model || "Qwen2.5-0.5B-Instruct"}</span>
-              </span>
-              <button
-                type="button"
-                onClick={() => setDrawerOpen(true)}
-                className="text-accent underline font-semibold hover:text-accent/80 transition-colors cursor-pointer"
-              >
-                Change
-              </button>
+              {setup?.language_model ? (
+                <>
+                  <span>
+                    Using <span className="font-mono text-paper">{setup.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"}</span> and{" "}
+                    <span className="font-mono text-paper">{setup.language_model}</span>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen(true)}
+                    className="text-accent underline font-semibold hover:text-accent/80 transition-colors cursor-pointer"
+                  >
+                    Change
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-ochre flex items-center gap-1.5 font-medium">
+                    <span className="w-2 h-2 rounded-full bg-ochre animate-pulse" />
+                    No model configured yet
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => setDrawerOpen(true)}
+                    className="text-accent underline font-semibold hover:text-accent/80 transition-colors cursor-pointer ml-1"
+                  >
+                    Configure setup
+                  </button>
+                </>
+              )}
             </div>
           </div>
 
@@ -345,6 +403,32 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
                   value={activeLanguage}
                   onChange={(id) => setActiveLanguage(id)}
                 />
+
+                {/* Suggestions for local models */}
+                {suggestions?.local_instruct && suggestions.local_instruct.length > 0 && (
+                  <div className="pt-2">
+                    <p className="text-xs font-semibold font-mono text-ink-soft mb-2">
+                      Suggested edge models (local runner runnable):
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                      {suggestions.local_instruct.map((m) => (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => setActiveLanguage(m.id)}
+                          className={`text-left p-2 rounded border text-xs font-mono transition-colors flex items-center justify-between ${
+                            activeLanguage === m.id
+                              ? "bg-accent/10 border-accent text-accent font-bold"
+                              : "bg-paper border-line text-ink hover:border-accent"
+                          }`}
+                        >
+                          <span className="truncate">{m.id}</span>
+                          <span className="text-[10px] text-sage-deep font-sans shrink-0 ml-2">{m.badge}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
 

@@ -10,6 +10,7 @@ from app.hf.inference import generate_text
 from app.pipeline.retrieve import retrieve_chunks
 from app.pipeline.index import VectorIndex
 from app.reliability.features import extract_features
+from app.runners.local import run_local_inference
 
 
 async def run_single_question(
@@ -18,6 +19,8 @@ async def run_single_question(
     top_k: int,
     question: str,
     gold_answer: str,
+    runner_type: str = "hosted",
+    quantization: str = "none",
 ) -> dict[str, Any]:
     """Runs a single question end-to-end through retrieval and generation."""
     t_start = time.perf_counter()
@@ -35,13 +38,23 @@ async def run_single_question(
     )
 
     t_gen_0 = time.perf_counter()
-    gen_res = await generate_text(
-        model_id=language_model,
-        prompt=user_prompt,
-        system_prompt=system_prompt,
-        max_tokens=64,
-        temperature=0.0,
-    )
+    if runner_type == "local":
+        gen_res = await run_local_inference(
+            model_id=language_model,
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            max_tokens=64,
+            temperature=0.0,
+            quantization=quantization,
+        )
+    else:
+        gen_res = await generate_text(
+            model_id=language_model,
+            prompt=user_prompt,
+            system_prompt=system_prompt,
+            max_tokens=64,
+            temperature=0.0,
+        )
     t_gen_1 = time.perf_counter()
     gen_ms = (t_gen_1 - t_gen_0) * 1000
 

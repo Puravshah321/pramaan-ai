@@ -1,69 +1,57 @@
 # PROGRESS.md
 
-## Iteration Number: 9
-**Last Change:** REDESIGN v3 implementation and full verification pass:
-1. Home page fully redesigned with editorial theme, full-width black hero, Fraunces/DM Sans typography, Live Evidence Card (highlight sweep & typewriter effect), 600ms count-up stats strip, 01/02/03 Problem section, 4-step How It Works flow, and slide-out setup drawer.
-2. Verified all 7 primary pages (Home, Guide, Models, Benchmark, Results, Recommend, Try It) on desktop (1440x900) and mobile (390x844).
-3. Ran complete automated test suite (57/57 passed):
-   - Backend Pytest: 15 passed (endpoints, live HF, pipeline).
-   - Frontend Playwright: 42 passed (14 page visual audits with zero console errors & zero failed network requests, static anti-placeholder check, home suite, benchmark e2e with cancel, recommend sliders, try-it flow, and axe-core accessibility audit with 0 critical violations).
-4. Ran benchmark, trained reliability checker, and executed `scripts/make_report.py` to generate research figures (`docs/figures/*.png`), CSV exports (`results/export/*.csv`), and live data (`docs/report_data.json`).
-5. Rewrote `README.md` (<600 lines) with complete live measurements, architecture diagram, and clean local setup instructions.
-**Status:** All tasks complete, verified, and ready for git commit and push.
+## Iteration Number: 10
+**Current Stage:** REDESIGN v4 Completed & Verified
+**Active Goal:**
+1. Real llama-cpp-python local runner with GGUF auto-download and real VRAM/RSS memory tracking.
+2. Complete removal of silent heuristic extraction fallback (record failed status with plain-language errors).
+3. Script `scripts/audit_runs.py` to invalidate all contaminated past runs and add "Show invalid runs" toggle.
+4. Model availability 3-check system (router catalog, Hub mapping, 1-token test call) with 10-minute caching.
+5. Removal of hard-coded default model IDs (live queries for instruct models under 4B with GGUF, setup prompt if unconfigured).
+6. Token capability check in `/api/health` with warning banner on Home and Models for fine-grained scope limitations.
+7. Hardware auto-detection with NVIDIA NVML / CPU profiles.
+8. Run Quick benchmark on 50 SQuAD v2 questions with local runner and report raw metrics.
+9. Verify all tests, update documentation, and push to GitHub.
 
 ---
 
-## Acceptance Checklist
+## REDESIGN v4 Checklist
 
-### Part 1: Home Page Redesign
-- [x] Full-width black hero band (`calc(100vh - 72px)`) with Fraunces headline, accent "trust", and DM Sans body.
-- [x] Live Evidence Card backed by `GET /api/showcase/latest` with 400ms sweep highlight and typewriter answer.
-- [x] Active setup line with slide-out Change Setup drawer.
-- [x] Live Numbers Strip: 4 metrics (`documents_indexed`, `questions_answered`, `setups_measured`, `api_calls_made`) with 600ms count-up.
-- [x] The Problem: 3 editorial rows with numerals 01, 02, 03.
-- [x] How It Works: 4 steps connected by SVG line (Pick, Measure, Compare, Trust).
-- [x] Latest Result Teaser with real Recharts scatter plot.
-- [x] Final CTA band in sage with "Start with one document."
-- [x] Footer in full black band with logo, status dots, and MIT licence.
+- [x] 1. Remove silent heuristic fallback in `backend/app/hf/inference.py` and `backend/app/runners/hosted.py`
+- [x] 2. Create `backend/app/hf/errors.py` (plain-language error translator)
+- [x] 3. Create `backend/app/runners/local.py` with real llama-cpp-python GGUF runner and memory tracking
+- [x] 4. Create `backend/app/runners/hardware.py` with GPU/CPU auto-detection and hardware profiles
+- [x] 5. Add `is_valid` and `invalid_reason` to `Run` model and update endpoints (`include_invalid` toggle)
+- [x] 6. Write and execute `scripts/audit_runs.py` to invalidate contaminated runs (22/22 past runs quarantined)
+- [x] 7. Implement 3-check model availability system in `backend/app/hf/hub.py` with 10-minute cache
+- [x] 8. Extend `/api/health` with token capability check (router test & fine-grained scope detection)
+- [x] 9. Remove all hard-coded model strings across backend and frontend; add live suggestions
+- [x] 10. Frontend: Add token warning banner on Home & Models, "Show invalid runs" toggle on Results/Benchmark, unconfigured setup drawer
+- [x] 11. Run 50-question SQuAD v2 benchmark with local runner on Qwen2.5-0.5B-Instruct (Q4_K_M and Q8_0)
+- [x] 12. Run backend pytest suite (15 passed with coverage)
+- [x] 13. Run frontend Playwright e2e and accessibility suites (42 passed)
+- [x] 14. Re-generate research figures, CSV exports, and report_data.json
+- [x] 15. Update README.md (<600 lines) and push to GitHub main branch
 
-### Part 2: Declutter All Other Pages
-- [x] Benchmark: 3-step setup flow, Quick/Balanced/Custom presets, collapsible Advanced parameters.
-- [x] Results: Pareto frontier scatter plot on top, reading help, tabs for Table (6 default columns), Factor Effects, and Reliability.
-- [x] Recommend: Single-row sliders for memory and latency, winning card in black, comparative claims gated behind $n \ge 100$ and $\ge 3$ configs.
-- [x] Models: Active setup, collapsed Compare models, and Documents manager.
-- [x] Guide: SVG diagram with arrows on every connector, searchable glossary.
-- [x] Try It: 3-step layout (Document with upload/SQuAD v2/paste, Ask with AI suggestions, Read with black card and evidence highlight).
+---
 
-### Part 3: Test Suite
-- [x] Backend tests (`test_endpoints.py`, `test_pipeline.py`, `test_live_hf.py`): 15/15 passed.
-- [x] Frontend tests in `frontend/e2e/`:
-  - `pages.spec.ts`: 14/14 passed (desktop & mobile, zero console errors, zero failed network requests, 14 screenshots).
-  - `static_check.spec.ts`: 2/2 passed (zero forbidden placeholder tokens).
-  - `home.spec.ts`: 4/4 passed.
-  - `benchmark.spec.ts`: 4/4 passed (preset execution, streaming progress, cancellation).
-  - `recommend.spec.ts`: 2/2 passed.
-  - `try_it.spec.ts`: 2/2 passed.
-  - `accessibility.spec.ts`: 14/14 passed (axe-core WCAG 2.1 AA audit, zero critical violations).
-- [x] Full test report saved to `docs/TEST_REPORT.md`.
-
-### Part 4: Research Figures & Documentation
-- [x] Real benchmark run executed on SQuAD v2 subset.
-- [x] Reliability detector trained on real labeled answers.
-- [x] `scripts/make_report.py` created and run:
-  - `docs/figures/pareto_frontier.png`
-  - `docs/figures/latency_vs_f1.png`
-  - `docs/figures/calibration_curve.png`
-  - `docs/figures/factor_effects.png`
-  - `results/export/benchmark_results.csv`
-  - `results/export/pareto_configs.csv`
-  - `docs/report_data.json`
-- [x] `README.md` completely rewritten (<600 lines) with exact matching figures and architecture Mermaid.
-
-### Part 5: GitHub Push
-- [x] Verified zero committed secrets (`git grep -i "hf_"` returns zero real tokens).
-- [x] Ready to commit in clean logical steps and push to `origin main`.
+## Verified Evaluation Results
+- **Run `run_6d67c8c2`** (Qwen2.5-0.5B-Instruct `Q4_K_M`, n=50 questions, SQuAD v2):
+  - Recall@K: 0.900 (Top-K=3)
+  - EM: 0.100
+  - F1: 0.316
+  - Median Latency (p50): 3262.8 ms
+  - Peak Memory: 220.0 MB (Real measured process RSS/VRAM)
+  - Failed Calls: 0
+- **Run `run_48353e7c`** (Qwen2.5-0.5B-Instruct `Q8_0`, n=50 questions, SQuAD v2):
+  - Recall@K: 0.900 (Top-K=3)
+  - EM: 0.120
+  - F1: 0.305
+  - Median Latency (p50): 2413.4 ms
+  - Peak Memory: 1267.1 MB (Real measured VRAM)
+  - Failed Calls: 0
 
 ---
 
 ## Known Failures & BLOCKED
-None.
+None. All 15 checklist items verified and passing.

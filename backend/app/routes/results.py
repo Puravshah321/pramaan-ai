@@ -16,6 +16,7 @@ router = APIRouter(prefix="/api/results", tags=["results"])
 @router.get("")
 async def get_results(
     run_id: Optional[str] = Query(default=None),
+    include_invalid: bool = Query(default=False),
     session: AsyncSession = Depends(get_db),
 ) -> list[dict[str, Any]]:
     """Retrieve measured configuration metrics for a specific run or all runs."""
@@ -23,7 +24,10 @@ async def get_results(
         select(RunConfig)
         .options(selectinload(RunConfig.metrics), selectinload(RunConfig.run))
         .join(RunConfig.metrics)
+        .join(RunConfig.run)
     )
+    if not include_invalid:
+        stmt = stmt.where(Run.is_valid.is_(True))
     if run_id:
         stmt = stmt.where(RunConfig.run_id == run_id)
 
@@ -39,6 +43,8 @@ async def get_results(
             "config_id": c.id,
             "run_id": c.run_id,
             "run_name": c.run.name if c.run else "Run",
+            "is_valid": c.run.is_valid if c.run else True,
+            "invalid_reason": c.run.invalid_reason if c.run else None,
             "chunk_size": c.chunk_size,
             "top_k": c.top_k,
             "embedding_model": c.embedding_model,
@@ -67,7 +73,11 @@ async def get_factor_effects(
 ) -> dict[str, Any]:
     """Compute per-factor marginal effects on F1, latency, and memory across all measured runs."""
     res = await session.execute(
-        select(RunConfig).options(selectinload(RunConfig.metrics)).join(RunConfig.metrics)
+        select(RunConfig)
+        .options(selectinload(RunConfig.metrics))
+        .join(RunConfig.metrics)
+        .join(RunConfig.run)
+        .where(Run.is_valid.is_(True))
     )
     configs = res.scalars().all()
 

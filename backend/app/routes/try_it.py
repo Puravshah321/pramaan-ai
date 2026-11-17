@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import time
 from typing import Any, Optional
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import DetectorModel, Document, ShowcaseItem
+from app.models import AppSettings, DetectorModel, Document, ShowcaseItem
 from app.pipeline.chunking import chunk_text
 from app.pipeline.index import VectorIndex
 from app.pipeline.retrieve import retrieve_chunks
@@ -23,8 +23,8 @@ router = APIRouter(tags=["try_it"])
 class AskRequest(BaseModel):
     question: str
     dataset_id: Optional[str] = None
-    embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2"
-    language_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    embedding_model: Optional[str] = "sentence-transformers/all-MiniLM-L6-v2"
+    language_model: Optional[str] = None
     chunk_size: int = 256
     top_k: int = 3
 
@@ -43,6 +43,19 @@ async def ask_question(
 ) -> dict[str, Any]:
     """Execute question through live retrieval + generation pipeline."""
     t_start = time.perf_counter()
+
+    target_lm = req.language_model
+    target_em = req.embedding_model or "sentence-transformers/all-MiniLM-L6-v2"
+    if not target_lm:
+        settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+        app_settings = settings_res.scalar_one_or_none()
+        target_lm = app_settings.language_model if app_settings else None
+
+    if not target_lm:
+        raise HTTPException(
+            status_code=400,
+            detail="No language model configured. Please choose a model in the Setup drawer or specify one in the request.",
+        )
 
     # 1. Fetch corpus documents
     stmt = select(Document)
@@ -67,7 +80,7 @@ async def ask_question(
     # 2. Build index
     v_index = VectorIndex(
         corpus_id="runtime",
-        embedding_model=req.embedding_model,
+        embedding_model=target_em,
         chunk_size=req.chunk_size,
     )
     all_chunks = []
@@ -80,7 +93,7 @@ async def ask_question(
     if all_chunks:
         from app.pipeline.embed import embed_texts
         chunk_texts = [c["text"] for c in all_chunks]
-        emb_res = await embed_texts(model_id=req.embedding_model, texts=chunk_texts)
+        emb_res = await embed_texts(model_id=target_em, texts=chunk_texts)
         if emb_res.get("embeddings"):
             v_index.add(all_chunks, emb_res["embeddings"])
 
@@ -91,7 +104,7 @@ async def ask_question(
     # 4. Generate
     t_gen_0 = time.perf_counter()
     gen_res = await generate_answer(
-        language_model=req.language_model,
+        language_model=target_lm,
         query=req.question,
         chunks=retrieved,
     )

@@ -16,16 +16,31 @@ export interface ApiHealth {
     reachable: boolean;
     error: string | null;
     token_present: boolean;
+    username?: string | null;
+    token_role?: string | null;
+    is_fine_grained_scoped?: boolean;
+    router_accessible?: boolean;
+    token_message?: string | null;
+    tokens_url?: string;
+    providers_url?: string;
   };
   local_runner: boolean;
+  hardware?: {
+    device: string;
+    profile: string;
+    gpu?: any;
+    ram_total_mb: number;
+    ram_available_mb: number;
+  };
   database: string;
 }
 
 export interface SetupConfig {
-  embedding_model: string;
-  language_model: string;
+  embedding_model: string | null;
+  language_model: string | null;
   dataset_id: string | null;
   ui_preferences: Record<string, any>;
+  configured?: boolean;
 }
 
 export interface WorkspaceStats {
@@ -78,6 +93,14 @@ export async function fetchSetup(): Promise<SetupConfig> {
   return res.data;
 }
 
+export async function fetchSetupSuggestions(): Promise<{
+  local_instruct: Array<{ id: string; type: string; badge: string; description?: string }>;
+  embeddings: Array<{ id: string; type: string; badge: string }>;
+}> {
+  const res = await api.get("/api/setup/suggestions");
+  return res.data;
+}
+
 export async function updateSetup(data: Partial<SetupConfig>): Promise<SetupConfig> {
   const res = await api.put<SetupConfig>("/api/setup", data);
   return res.data;
@@ -112,8 +135,8 @@ export async function testModelInference(modelId: string, prompt?: string) {
   return res.data;
 }
 
-export async function fetchRuns() {
-  const res = await api.get("/api/runs");
+export async function fetchRuns(includeInvalid: boolean = false) {
+  const res = await api.get("/api/runs", { params: { include_invalid: includeInvalid } });
   return res.data;
 }
 
@@ -137,8 +160,8 @@ export async function cancelBenchmarkRun(id: string) {
   return res.data;
 }
 
-export async function fetchResults(runId?: string) {
-  const res = await api.get("/api/results", { params: { run_id: runId } });
+export async function fetchResults(runId?: string, includeInvalid: boolean = false) {
+  const res = await api.get("/api/results", { params: { run_id: runId, include_invalid: includeInvalid } });
   return res.data;
 }
 

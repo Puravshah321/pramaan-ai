@@ -66,7 +66,7 @@ async def get_latest_showcase(
         sentences = [s.strip() for s in doc_text.split(".") if s.strip()]
         span = sentences[0] + "." if sentences else doc_text[:120]
 
-        setup_str = f"{cfg.embedding_model.split('/')[-1]} + {cfg.language_model.split('/')[-1]}" if cfg else "all-MiniLM-L6-v2 + Qwen2.5-0.5B"
+        setup_str = f"{cfg.embedding_model.split('/')[-1]} + {cfg.language_model.split('/')[-1]}" if (cfg and cfg.language_model and cfg.embedding_model) else ""
         badge = "Reliable" if ans.correct else "Unreliable"
 
         return {

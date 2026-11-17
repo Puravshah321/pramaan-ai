@@ -35,9 +35,18 @@ export const Benchmark: React.FC = () => {
     queryFn: fetchHealth,
   });
 
+  const [showInvalid, setShowInvalid] = useState(false);
+  const [runnerType, setRunnerType] = useState<string>("local");
+
+  useEffect(() => {
+    if (health?.local_runner) {
+      setRunnerType("local");
+    }
+  }, [health]);
+
   const { data: runsList } = useQuery({
-    queryKey: ["runs"],
-    queryFn: fetchRuns,
+    queryKey: ["runs", showInvalid],
+    queryFn: () => fetchRuns(showInvalid),
     refetchInterval: 3000,
   });
 
@@ -47,8 +56,8 @@ export const Benchmark: React.FC = () => {
   // Factor choices
   const [chunkSizes, setChunkSizes] = useState<number[]>([256]);
   const [topKs, setTopKs] = useState<number[]>([3]);
-  const [quantizations, setQuantizations] = useState<string[]>(["none"]);
-  const [questionCount, setQuestionCount] = useState<number>(5);
+  const [quantizations, setQuantizations] = useState<string[]>(["Q4_K_M"]);
+  const [questionCount, setQuestionCount] = useState<number>(50);
   const [memoryLimitGb, setMemoryLimitGb] = useState<number>(4.0);
 
   // Preset handler
@@ -57,11 +66,13 @@ export const Benchmark: React.FC = () => {
     if (newPreset === "quick") {
       setChunkSizes([256]);
       setTopKs([3]);
-      setQuestionCount(5);
+      setQuantizations(["Q4_K_M"]);
+      setQuestionCount(50);
     } else if (newPreset === "balanced") {
       setChunkSizes([256, 512]);
       setTopKs([3, 5]);
-      setQuestionCount(20);
+      setQuantizations(["Q4_K_M", "Q8_0"]);
+      setQuestionCount(50);
     }
   };
 
@@ -82,7 +93,7 @@ export const Benchmark: React.FC = () => {
         top_ks: topKs,
         quantizations: quantizations,
         embedding_models: [setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"],
-        language_models: [setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"],
+        language_models: setup?.language_model ? [setup.language_model] : [],
         question_count: questionCount,
         memory_limit_gb: memoryLimitGb,
       }),
@@ -136,14 +147,18 @@ export const Benchmark: React.FC = () => {
   });
 
   const handleStartRun = () => {
+    if (!setup?.language_model) {
+      return;
+    }
     startMutation.mutate({
       name: `Benchmark (${preset.toUpperCase()}: k=${topKs.join(",")}, c=${chunkSizes.join(",")})`,
       chunk_sizes: chunkSizes,
       top_ks: topKs,
       quantizations: quantizations,
       embedding_models: [setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"],
-      language_models: [setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"],
+      language_models: [setup.language_model],
       question_count: questionCount,
+      runner_type: runnerType,
     });
   };
 
@@ -245,6 +260,24 @@ export const Benchmark: React.FC = () => {
               </Link>
             </div>
           )}
+        </div>
+      )}
+
+      {/* Setup required warning */}
+      {!setup?.language_model && (
+        <div className="card-paper p-5 bg-ochre/15 border border-ochre rounded-lg flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3">
+            <AlertTriangle className="w-5 h-5 text-ochre shrink-0" />
+            <div>
+              <p className="font-sans font-bold text-ink text-sm">No language model configured</p>
+              <p className="font-sans text-xs text-ink-soft">
+                Choose an active model on the Models page or in the setup drawer before starting a benchmark.
+              </p>
+            </div>
+          </div>
+          <Link to="/models" className="btn-primary text-xs px-4 py-2">
+            Configure model →
+          </Link>
         </div>
       )}
 
@@ -500,8 +533,19 @@ export const Benchmark: React.FC = () => {
 
       {/* Past Runs Section */}
       <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-4">
-        <div className="flex items-center justify-between pb-2 border-b border-line">
-          <h2 className="font-serif text-2xl font-bold text-ink">Past runs</h2>
+        <div className="flex items-center justify-between pb-2 border-b border-line flex-wrap gap-2">
+          <div className="flex items-center gap-4">
+            <h2 className="font-serif text-2xl font-bold text-ink">Past runs</h2>
+            <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={showInvalid}
+                onChange={(e) => setShowInvalid(e.target.checked)}
+                className="rounded accent-accent"
+              />
+              <span>Show invalid / contaminated runs</span>
+            </label>
+          </div>
           <Link to="/results" className="text-xs font-sans font-semibold text-accent hover:underline">
             View full results →
           </Link>
@@ -523,7 +567,17 @@ export const Benchmark: React.FC = () => {
               <tbody className="divide-y divide-line/60">
                 {runsList.map((r: any) => (
                   <tr key={r.id} className="hover:bg-paper/50">
-                    <td className="py-2.5 px-3 font-semibold text-ink">{r.name}</td>
+                    <td className="py-2.5 px-3 font-semibold text-ink">
+                      <span>{r.name}</span>
+                      {!r.is_valid && (
+                        <span
+                          className="ml-2 px-1.5 py-0.5 rounded text-[10px] font-sans bg-ochre/20 text-ochre font-medium"
+                          title={r.invalid_reason || "Contaminated / invalid run"}
+                        >
+                          Invalid
+                        </span>
+                      )}
+                    </td>
                     <td className="py-2.5 px-3">
                       <span
                         className={`px-2 py-0.5 rounded text-[11px] font-sans font-semibold ${

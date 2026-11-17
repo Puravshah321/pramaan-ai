@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchSetup,
+  fetchHealth,
   updateSetup,
   fetchModelDetails,
   testModelInference,
@@ -29,11 +30,16 @@ export const Models: React.FC = () => {
     queryFn: fetchSetup,
   });
 
+  const { data: health } = useQuery({
+    queryKey: ["health"],
+    queryFn: fetchHealth,
+  });
+
   const [activeEmbedding, setActiveEmbedding] = useState(
     setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"
   );
   const [activeLanguage, setActiveLanguage] = useState(
-    setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"
+    setup?.language_model || ""
   );
 
   // Candidate comparison list (up to 3 embedding, 3 language models)
@@ -44,15 +50,17 @@ export const Models: React.FC = () => {
 
   useEffect(() => {
     if (setup?.embedding_model) {
-      setActiveEmbedding(setup.embedding_model);
+      const em = setup.embedding_model;
+      setActiveEmbedding(em);
       setCandidateEmbeddings((prev) =>
-        prev.length === 0 ? [setup.embedding_model] : prev
+        prev.length === 0 ? [em] : prev
       );
     }
     if (setup?.language_model) {
-      setActiveLanguage(setup.language_model);
+      const lm = setup.language_model;
+      setActiveLanguage(lm);
       setCandidateLanguage((prev) =>
-        prev.length === 0 ? [setup.language_model] : prev
+        prev.length === 0 ? [lm] : prev
       );
     }
   }, [setup]);
@@ -152,6 +160,34 @@ export const Models: React.FC = () => {
 
   return (
     <div className="max-w-[1160px] mx-auto px-4 py-8 page-transition space-y-12">
+      {/* Token capability warning if present */}
+      {health?.huggingface?.token_message && (
+        <div className="w-full bg-ochre/15 border border-ochre rounded-lg p-4 text-ink text-xs md:text-sm flex items-center justify-between flex-wrap gap-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-ochre shrink-0 animate-pulse" />
+            <span className="font-sans font-medium">{health.huggingface.token_message}</span>
+          </div>
+          <div className="flex items-center gap-4 font-mono text-xs font-semibold">
+            <a
+              href={health.huggingface.tokens_url || "https://huggingface.co/settings/tokens"}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-ink hover:text-accent"
+            >
+              Hugging Face Tokens ↗
+            </a>
+            <a
+              href={health.huggingface.providers_url || "https://huggingface.co/settings/inference-providers"}
+              target="_blank"
+              rel="noreferrer"
+              className="underline text-ink hover:text-accent"
+            >
+              Inference Providers ↗
+            </a>
+          </div>
+        </div>
+      )}
+
       <div>
         <h1 className="font-serif text-[44px] font-bold text-ink leading-tight mb-2">
           Models
@@ -446,9 +482,13 @@ const ModelTableRow: React.FC<{
       <td className="py-2.5 px-3 font-semibold text-ink">{modelId}</td>
       <td className="py-2.5 px-3">
         {details?.inference_route === "api" ? (
-          <span className="text-sage-deep bg-sage/20 px-1.5 py-0.5 rounded">API</span>
+          <span className="text-sage-deep bg-sage/20 px-2 py-0.5 rounded font-sans font-medium">API route</span>
+        ) : details?.inference_route === "needs_token_fix" ? (
+          <span className="text-ochre bg-ochre/20 px-2 py-0.5 rounded font-sans font-medium">Needs token fix</span>
+        ) : details?.inference_route === "not_runnable" ? (
+          <span className="text-accent bg-accent/15 px-2 py-0.5 rounded font-sans font-medium">Not runnable</span>
         ) : (
-          <span className="text-ink-soft bg-paper px-1.5 py-0.5 rounded">Local only</span>
+          <span className="text-ink-soft bg-paper border border-line px-2 py-0.5 rounded font-sans font-medium">Local only</span>
         )}
       </td>
       <td className="py-2.5 px-3">{formatParams(details?.parameters)}</td>

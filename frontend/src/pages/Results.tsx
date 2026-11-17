@@ -35,11 +35,12 @@ export const Results: React.FC = () => {
   const runId = searchParams.get("run_id") || undefined;
 
   const [activeTab, setActiveTab] = useState<"table" | "effects" | "reliability">("table");
+  const [showInvalid, setShowInvalid] = useState(false);
 
   // Fetch results
   const { data: results, isLoading: isResultsLoading } = useQuery({
-    queryKey: ["results", runId],
-    queryFn: () => fetchResults(runId),
+    queryKey: ["results", runId, showInvalid],
+    queryFn: () => fetchResults(runId, showInvalid),
   });
 
   // Fetch factor effects
@@ -81,10 +82,21 @@ export const Results: React.FC = () => {
 
   if (!results || results.length === 0) {
     return (
-      <div className="max-w-[1160px] mx-auto px-4 py-12">
+      <div className="max-w-[1160px] mx-auto px-4 py-12 space-y-6">
+        <div className="flex justify-end">
+          <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line">
+            <input
+              type="checkbox"
+              checked={showInvalid}
+              onChange={(e) => setShowInvalid(e.target.checked)}
+              className="rounded accent-accent"
+            />
+            <span>Show invalid / contaminated runs</span>
+          </label>
+        </div>
         <EmptyState
           title="No completed runs yet"
-          description="You haven't run any benchmarks yet. Launch a quick verification check or planned factorial sweep to see empirical metrics."
+          description="You haven't run any clean benchmarks yet. Launch a quick verification check or planned sweep to see empirical metrics."
           actionText="Go to Benchmark"
           actionHref="/benchmark"
         />
@@ -125,13 +137,24 @@ export const Results: React.FC = () => {
   return (
     <div className="max-w-[1160px] mx-auto px-4 py-8 page-transition space-y-12">
       {/* Page Header */}
-      <div>
-        <h1 className="font-serif text-[44px] font-bold text-ink leading-tight mb-2">
-          Results
-        </h1>
-        <p className="text-ink-soft text-base max-w-[70ch]">
-          Measured trade-offs across chunk size, Top-K, model size and quantization, computed directly from stored evaluation runs.
-        </p>
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+        <div>
+          <h1 className="font-serif text-[44px] font-bold text-ink leading-tight mb-2">
+            Results
+          </h1>
+          <p className="text-ink-soft text-base max-w-[70ch]">
+            Measured trade-offs across chunk size, Top-K, model size and quantization, computed directly from stored evaluation runs.
+          </p>
+        </div>
+        <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line self-start md:self-auto shrink-0">
+          <input
+            type="checkbox"
+            checked={showInvalid}
+            onChange={(e) => setShowInvalid(e.target.checked)}
+            className="rounded accent-accent"
+          />
+          <span>Show invalid / contaminated runs</span>
+        </label>
       </div>
 
       {/* ONE Primary Chart & Reading Help */}
@@ -313,6 +336,14 @@ export const Results: React.FC = () => {
                             {isPareto && (
                               <span className="text-[10px] font-bold font-sans text-accent bg-accent/15 px-1 py-0.5 rounded">
                                 PARETO
+                              </span>
+                            )}
+                            {!row.is_valid && (
+                              <span
+                                className="text-[10px] font-medium font-sans text-ochre bg-ochre/20 px-1 py-0.5 rounded"
+                                title={row.invalid_reason || "Contaminated / invalid run"}
+                              >
+                                INVALID
                               </span>
                             )}
                             <span>

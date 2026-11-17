@@ -8,6 +8,7 @@ from huggingface_hub import InferenceClient
 from huggingface_hub.errors import HfHubHTTPError, BadRequestError
 
 from app.config import settings
+from app.hf.errors import translate_hf_error
 
 
 def _get_client() -> InferenceClient:
@@ -23,7 +24,40 @@ async def generate_text(
     temperature: float = 0.0,
     max_retries: int = 2,
 ) -> dict[str, Any]:
-    """Call Hugging Face inference for text generation via InferenceClient or OpenAI router endpoint."""
+    """Call Hugging Face inference for text generation via InferenceClient or OpenAI router endpoint.
+    Never falls back silently to heuristic extraction.
+    """
+    # Separate explicit baseline if chosen by user
+    if model_id.lower() in ["extractive-baseline", "extractive_baseline"]:
+        t0 = time.perf_counter()
+        context_body = prompt
+        if "Context:" in prompt and "Question:" in prompt:
+            parts = prompt.split("Question:")
+            context_body = parts[0].replace("Context:", "").strip()
+            q_part = parts[1].replace("Answer concisely:", "").strip()
+        else:
+            q_part = prompt
+
+        q_words = [w.lower() for w in q_part.split() if len(w) > 3]
+        best_sentence = "I don't know."
+        sentences = [s.strip() for s in context_body.split(".") if len(s.strip()) > 5]
+        max_overlap = 0
+
+        for s in sentences:
+            overlap = sum(1 for w in q_words if w in s.lower())
+            if overlap > max_overlap:
+                max_overlap = overlap
+                best_sentence = s + "."
+
+        elapsed = (time.perf_counter() - t0) * 1000
+        return {
+            "text": best_sentence,
+            "latency_ms": round(elapsed, 2),
+            "tokens": len(best_sentence.split()),
+            "error": None,
+            "source": "extractive_baseline",
+        }
+
     client = _get_client()
     messages = []
     if system_prompt:
@@ -36,7 +70,6 @@ async def generate_text(
     for attempt in range(max_retries):
         t0 = time.perf_counter()
         try:
-            # 1. Attempt InferenceClient chat_completion
             response = client.chat_completion(
                 messages=messages,
                 model=model_id,
@@ -66,62 +99,24 @@ async def generate_text(
                 await asyncio.sleep(delay)
                 delay *= 2
                 continue
-            elif status == 402:
-                last_err = "Hugging Face API returned HTTP 402: Payment or inference credits required. Set a valid HF_TOKEN in backend/.env."
-                break
-            elif status in [401, 403]:
-                last_err = f"Hugging Face API returned HTTP {status}: Authentication required. Please add a valid read HF_TOKEN to backend/.env."
-                break
             else:
-                last_err = f"Hugging Face API error: {str(e)[:150]}"
+                last_err = str(e)
                 break
         except BadRequestError as e:
-            last_err = f"Model not supported by remote inference provider: {str(e)[:120]}"
+            last_err = str(e)
             break
         except Exception as e:
-            last_err = f"API request error: {str(e)[:150]}"
+            last_err = str(e)
             break
 
-    # If remote API call fails and local runner is enabled, run extractive prompt-answering locally
-    if settings.local_runner:
-        t_local_0 = time.perf_counter()
-        # Heuristic local extraction from prompt context
-        context_body = prompt
-        if "Context:" in prompt and "Question:" in prompt:
-            parts = prompt.split("Question:")
-            context_body = parts[0].replace("Context:", "").strip()
-            q_part = parts[1].replace("Answer concisely:", "").strip()
-        else:
-            q_part = prompt
-
-        # Look for salient answer sentence matching query keywords
-        q_words = [w.lower() for w in q_part.split() if len(w) > 3]
-        best_sentence = "I don't know."
-        sentences = [s.strip() for s in context_body.split(".") if len(s.strip()) > 5]
-        max_overlap = 0
-
-        for s in sentences:
-            overlap = sum(1 for w in q_words if w in s.lower())
-            if overlap > max_overlap:
-                max_overlap = overlap
-                best_sentence = s + "."
-
-        t_local_1 = time.perf_counter()
-        local_ms = (t_local_1 - t_local_0) * 1000
-
-        return {
-            "text": best_sentence,
-            "latency_ms": round(local_ms, 2),
-            "tokens": len(best_sentence.split()),
-            "error": last_err,  # Preserves the API failure note
-            "source": "local",
-        }
-
+    # If remote API call fails, return clean translated error with empty text.
+    # No silent heuristic fallback.
+    translated_error = translate_hf_error(last_err)
     return {
         "text": "",
         "latency_ms": 0.0,
         "tokens": 0,
-        "error": last_err or "Inference call failed",
+        "error": translated_error,
         "source": "api",
     }
 

@@ -24,7 +24,7 @@ class AppSettings(Base):
 
     key = Column(String(64), primary_key=True, default="default")
     embedding_model = Column(String(256), default="sentence-transformers/all-MiniLM-L6-v2")
-    language_model = Column(String(256), default="Qwen/Qwen2.5-0.5B-Instruct")
+    language_model = Column(String(256), nullable=True, default=None)
     dataset_id = Column(String(128), nullable=True)
     ui_preferences = Column(JSON, default=dict)
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
@@ -98,6 +98,8 @@ class Run(Base):
     question_count = Column(Integer, default=20)
     runner_type = Column(String(32), default="hosted")  # "hosted" or "local"
     hardware_desc = Column(JSON, default=dict)
+    is_valid = Column(Boolean, default=True)
+    invalid_reason = Column(String(512), nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
     finished_at = Column(DateTime, nullable=True)
 

@@ -131,7 +131,7 @@ export const TryIt: React.FC = () => {
       try {
         const sq = await suggestQuestions({
           document_text: content,
-          language_model: setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct",
+          language_model: setup?.language_model || undefined,
         });
         if (sq?.questions && sq.questions.length > 0) {
           setSuggestedQuestions(sq.questions);
@@ -165,7 +165,7 @@ export const TryIt: React.FC = () => {
       question: question.trim(),
       dataset_id: preparedDatasetId || undefined,
       embedding_model: setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2",
-      language_model: setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct",
+      language_model: setup?.language_model || undefined,
       chunk_size: chunkSize,
       top_k: topK,
     };

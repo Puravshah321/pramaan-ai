@@ -26,7 +26,7 @@ class ImportDatasetRequest(BaseModel):
 
 class GenerateQuestionsRequest(BaseModel):
     dataset_id: str
-    language_model: str
+    language_model: Optional[str] = None
     count: int = 5
 
 
@@ -171,13 +171,22 @@ async def generate_synthetic_questions(
         return {"error": "No documents found in dataset.", "generated": 0}
 
     generated_questions = []
+    lm = req.language_model
+    if not lm:
+        from app.models import AppSettings
+        settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+        app_settings = settings_res.scalar_one_or_none()
+        lm = app_settings.language_model if app_settings else None
+    if not lm:
+        return {"error": "No language model configured. Choose one in setup drawer or specify in request.", "generated": 0}
+
     for doc in docs:
         prompt = (
             f"Based on the following text, write one concise factual question and its short exact answer.\n\n"
             f"Text:\n{doc.content[:1000]}\n\n"
             f"Output format:\nQuestion: <question>\nAnswer: <answer>"
         )
-        res = await generate_text(model_id=req.language_model, prompt=prompt, max_tokens=64)
+        res = await generate_text(model_id=lm, prompt=prompt, max_tokens=64)
         output = res.get("text", "")
 
         q_val = ""
@@ -223,7 +232,7 @@ async def generate_synthetic_questions(
 class SuggestQuestionsRequest(BaseModel):
     dataset_id: Optional[str] = None
     document_text: Optional[str] = None
-    language_model: str = "Qwen/Qwen2.5-0.5B-Instruct"
+    language_model: Optional[str] = None
 
 
 @router.post("/api/questions/suggest")
@@ -232,6 +241,16 @@ async def suggest_questions_for_document(
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     """Generate 3 candidate test questions from document using active LLM."""
+    lm = req.language_model
+    if not lm:
+        from app.models import AppSettings
+        settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+        app_settings = settings_res.scalar_one_or_none()
+        lm = app_settings.language_model if app_settings else None
+
+    if not lm:
+        return {"questions": []}
+
     content = req.document_text or ""
     if not content and req.dataset_id:
         doc_res = await session.execute(

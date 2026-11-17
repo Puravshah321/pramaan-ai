@@ -27,11 +27,11 @@ async def get_setup(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     cfg = result.scalar_one_or_none()
 
     if not cfg:
-        # Create default
+        # Create default - initially None language_model unless chosen
         cfg = AppSettings(
             key="default",
             embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            language_model="Qwen/Qwen2.5-0.5B-Instruct",
+            language_model=None,
             dataset_id=None,
             ui_preferences={},
         )
@@ -43,7 +43,15 @@ async def get_setup(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
         "language_model": cfg.language_model,
         "dataset_id": cfg.dataset_id,
         "ui_preferences": cfg.ui_preferences or {},
+        "configured": bool(cfg.language_model and cfg.embedding_model),
     }
+
+
+@router.get("/suggestions")
+async def get_suggestions() -> dict[str, Any]:
+    """Returns dynamic model suggestions for setup drawer."""
+    from app.hf.hub import get_suggested_models
+    return await get_suggested_models()
 
 
 @router.put("")

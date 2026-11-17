@@ -15,7 +15,7 @@ from sqlalchemy.orm import selectinload
 from app.db import get_db
 from app.hf.hub import get_model_details
 from app.jobs import execute_run_task, run_manager, stream_run_events
-from app.models import Dataset, Document, Job, Question, Run, RunConfig
+from app.models import AppSettings, Dataset, Document, Job, Question, Run, RunConfig
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -24,7 +24,7 @@ class RunPreviewRequest(BaseModel):
     chunk_sizes: list[int] = [256, 512]
     top_ks: list[int] = [1, 3, 5]
     embedding_models: list[str] = ["sentence-transformers/all-MiniLM-L6-v2"]
-    language_models: list[str] = ["Qwen/Qwen2.5-0.5B-Instruct"]
+    language_models: list[str] = []
     quantizations: list[str] = ["none"]
     question_count: int = 20
     memory_limit_gb: Optional[float] = 4.0
@@ -36,7 +36,7 @@ class StartRunRequest(BaseModel):
     chunk_sizes: list[int] = [256]
     top_ks: list[int] = [3]
     embedding_models: list[str] = ["sentence-transformers/all-MiniLM-L6-v2"]
-    language_models: list[str] = ["Qwen/Qwen2.5-0.5B-Instruct"]
+    language_models: list[str] = []
     quantizations: list[str] = ["none"]
     question_count: int = 20
     runner_type: str = "hosted"
@@ -174,9 +174,22 @@ async def start_run(
     )
     session.add(run_record)
 
+    # Resolve language models: if empty or None, load from AppSettings
+    target_lms = [lm for lm in req.language_models if lm and lm.strip()]
+    if not target_lms:
+        settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+        app_settings = settings_res.scalar_one_or_none()
+        if app_settings and app_settings.language_model:
+            target_lms = [app_settings.language_model]
+        else:
+            raise HTTPException(
+                status_code=400,
+                detail="No language model configured. Please choose a model in the Setup drawer or specify one in the request.",
+            )
+
     # Create RunConfigs
     configs_to_execute = []
-    for lm in req.language_models:
+    for lm in target_lms:
         for em in req.embedding_models:
             for cs in req.chunk_sizes:
                 for k in req.top_ks:
@@ -235,11 +248,15 @@ async def start_run(
 
 
 @router.get("")
-async def list_runs(session: AsyncSession = Depends(get_db)) -> list[dict[str, Any]]:
-    """List all past benchmark runs."""
-    result = await session.execute(
-        select(Run).options(selectinload(Run.configs)).order_by(desc(Run.created_at))
-    )
+async def list_runs(
+    include_invalid: bool = Query(default=False),
+    session: AsyncSession = Depends(get_db),
+) -> list[dict[str, Any]]:
+    """List all past benchmark runs, filtering out invalid/contaminated runs by default."""
+    stmt = select(Run).options(selectinload(Run.configs)).order_by(desc(Run.created_at))
+    if not include_invalid:
+        stmt = stmt.where(Run.is_valid.is_(True))
+    result = await session.execute(stmt)
     runs = result.scalars().all()
 
     items = []
@@ -251,6 +268,8 @@ async def list_runs(session: AsyncSession = Depends(get_db)) -> list[dict[str, A
             "question_count": r.question_count,
             "configs_count": len(r.configs),
             "runner_type": r.runner_type,
+            "is_valid": r.is_valid,
+            "invalid_reason": r.invalid_reason,
             "created_at": r.created_at.isoformat() if r.created_at else None,
             "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         })
@@ -277,6 +296,8 @@ async def get_run_details(id: str, session: AsyncSession = Depends(get_db)) -> d
         "status": r.status,
         "question_count": r.question_count,
         "runner_type": r.runner_type,
+        "is_valid": r.is_valid,
+        "invalid_reason": r.invalid_reason,
         "created_at": r.created_at.isoformat() if r.created_at else None,
         "finished_at": r.finished_at.isoformat() if r.finished_at else None,
         "job": {

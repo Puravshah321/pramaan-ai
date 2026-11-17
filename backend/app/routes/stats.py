@@ -7,7 +7,7 @@ from sqlalchemy import desc, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
-from app.models import Answer, ConfigMetrics, Document, Run
+from app.models import Answer, ConfigMetrics, Document, Run, RunConfig
 
 router = APIRouter(prefix="/api/stats", tags=["stats"])
 
@@ -15,35 +15,48 @@ router = APIRouter(prefix="/api/stats", tags=["stats"])
 @router.get("")
 async def get_workspace_stats(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     """Returns live workspace run counts, configs measured, documents indexed, questions answered, and API calls made."""
-    # Runs count
-    runs_count_res = await session.execute(select(func.count(Run.id)))
+    # Runs count (valid only)
+    runs_count_res = await session.execute(select(func.count(Run.id)).where(Run.is_valid.is_(True)))
     runs_count = runs_count_res.scalar_one() or 0
 
-    # Measured configs count / setups measured
-    configs_count_res = await session.execute(select(func.count(ConfigMetrics.id)))
+    # Measured configs count / setups measured (from valid runs)
+    configs_count_res = await session.execute(
+        select(func.count(ConfigMetrics.id))
+        .join(RunConfig, ConfigMetrics.run_config_id == RunConfig.id)
+        .join(Run, RunConfig.run_id == Run.id)
+        .where(Run.is_valid.is_(True))
+    )
     configs_count = configs_count_res.scalar_one() or 0
 
     # Documents indexed
     docs_count_res = await session.execute(select(func.count(Document.id)))
     docs_count = docs_count_res.scalar_one() or 0
 
-    # Questions answered
+    # Questions answered (from valid runs)
     ans_count_res = await session.execute(
-        select(func.count(Answer.id)).where(Answer.answer != "").where(Answer.answer.isnot(None))
+        select(func.count(Answer.id))
+        .join(RunConfig, Answer.run_config_id == RunConfig.id)
+        .join(Run, RunConfig.run_id == Run.id)
+        .where(Run.is_valid.is_(True))
+        .where(Answer.answer != "")
+        .where(Answer.answer.isnot(None))
     )
     ans_count = ans_count_res.scalar_one() or 0
 
     # Total API calls made
     calls_res = await session.execute(
         select(func.coalesce(func.sum(ConfigMetrics.n + ConfigMetrics.failed_calls), 0))
+        .join(RunConfig, ConfigMetrics.run_config_id == RunConfig.id)
+        .join(Run, RunConfig.run_id == Run.id)
+        .where(Run.is_valid.is_(True))
     )
     calls_count = int(calls_res.scalar_one() or 0)
     if calls_count == 0 and ans_count > 0:
         calls_count = ans_count
 
-    # Last run
+    # Last valid run
     last_run_res = await session.execute(
-        select(Run).order_by(desc(Run.created_at)).limit(1)
+        select(Run).where(Run.is_valid.is_(True)).order_by(desc(Run.created_at)).limit(1)
     )
     last_run = last_run_res.scalar_one_or_none()
 

@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.models import ConfigMetrics, RunConfig
+from app.models import ConfigMetrics, Run, RunConfig
 from app.recommend import find_recommendation
 
 router = APIRouter(prefix="/api/recommend", tags=["recommend"])
@@ -23,7 +23,11 @@ async def get_recommendation(
 ) -> dict[str, Any]:
     """Recommends Pareto-optimal or budget-optimal configuration from measured runs."""
     res = await session.execute(
-        select(RunConfig).options(selectinload(RunConfig.metrics)).join(RunConfig.metrics)
+        select(RunConfig)
+        .options(selectinload(RunConfig.metrics))
+        .join(RunConfig.metrics)
+        .join(RunConfig.run)
+        .where(Run.is_valid.is_(True))
     )
     configs = res.scalars().all()
 
