@@ -3,13 +3,13 @@ from __future__ import annotations
 
 import uuid
 from typing import Any
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.models import Answer, DetectorModel, Question, RunConfig
+from app.models import Answer, DetectorModel, Question
 from app.reliability.train import train_reliability_checker
 
 router = APIRouter(prefix="/api/reliability", tags=["reliability"])

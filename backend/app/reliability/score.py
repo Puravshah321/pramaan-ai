@@ -2,12 +2,12 @@
 from __future__ import annotations
 
 import math
-from typing import Any, Optional
+from typing import Any
 
 
 def score_answer_reliability(
     features: dict[str, float],
-    model_weights: Optional[dict[str, float]] = None,
+    model_weights: dict[str, float] | None = None,
     intercept: float = 0.0,
     reliable_threshold: float = 0.70,
     uncertain_threshold: float = 0.40,
@@ -32,10 +32,7 @@ def score_answer_reliability(
         prob = 1.0 / (1.0 + math.exp(-max(min(z, 15.0), -15.0)))
     else:
         # Heuristic formulation
-        if idk == 1.0:
-            prob = 0.15
-        else:
-            prob = 0.5 * top_sim + 0.3 * lexical + 0.2 * min(1.0, gap * 2)
+        prob = 0.15 if idk == 1.0 else 0.5 * top_sim + 0.3 * lexical + 0.2 * min(1.0, gap * 2)
 
     prob = round(float(prob), 3)
 

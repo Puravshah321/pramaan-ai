@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import datetime
-from typing import Any
+
 from sqlalchemy import (
+    JSON,
     Boolean,
     Column,
     DateTime,
@@ -12,7 +13,6 @@ from sqlalchemy import (
     Integer,
     String,
     Text,
-    JSON,
 )
 from sqlalchemy.orm import declarative_base, relationship
 
@@ -96,7 +96,8 @@ class Run(Base):
     name = Column(String(256), nullable=False)
     status = Column(String(32), default="pending")  # pending, running, completed, cancelled, failed
     question_count = Column(Integer, default=20)
-    runner_type = Column(String(32), default="hosted")  # "hosted" or "local"
+    runner_type = Column(String(32), default="local")  # "hosted" or "local"
+    dataset_id = Column(String(64), nullable=True, default="rajpurkar/squad_v2")
     hardware_desc = Column(JSON, default=dict)
     is_valid = Column(Boolean, default=True)
     invalid_reason = Column(String(512), nullable=True)
@@ -179,16 +180,31 @@ class Job(Base):
     __tablename__ = "jobs"
 
     id = Column(String(64), primary_key=True)
-    run_id = Column(String(64), ForeignKey("runs.id"), nullable=False)
-    status = Column(String(32), default="pending")  # pending, running, completed, cancelled, failed
+    job_type = Column(String(32), default="benchmark_run")
+    run_id = Column(String(64), ForeignKey("runs.id"), nullable=True)
+    status = Column(String(32), default="queued")  # queued, running, completed, cancelled, failed, interrupted
+    progress = Column(Float, default=0.0)
     total_steps = Column(Integer, default=0)
     current_step = Column(Integer, default=0)
     current_question = Column(String(256), default="")
     current_config = Column(String(256), default="")
     running_accuracy = Column(Float, default=0.0)
     running_latency = Column(Float, default=0.0)
+    message = Column(String(512), default="")
+    payload_json = Column(JSON, default=dict)
+    result_json = Column(JSON, default=dict)
     error_message = Column(Text, nullable=True)
     created_at = Column(DateTime, default=datetime.datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
+
+
+class UserSetting(Base):
+    __tablename__ = "user_settings"
+
+    key = Column(String(64), primary_key=True)
+    value_json = Column(JSON, nullable=False)
+    description = Column(String(256), nullable=True)
+    category = Column(String(64), default="general")
     updated_at = Column(DateTime, default=datetime.datetime.utcnow, onupdate=datetime.datetime.utcnow)
 
 

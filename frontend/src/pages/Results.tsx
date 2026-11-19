@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { useSearchParams } from "react-router-dom";
+import { useSearchParams, Link } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchResults,
@@ -9,7 +9,6 @@ import {
 } from "../api/client";
 import { MetricValue } from "../components/MetricValue";
 import { EmptyState } from "../components/EmptyState";
-import { Tip } from "../components/Tip";
 import {
   Table,
   BarChart2,
@@ -17,7 +16,9 @@ import {
   ArrowUpDown,
   Sparkles,
   Loader2,
-  AlertTriangle,
+  Filter,
+  CheckCircle2,
+  Layers,
 } from "lucide-react";
 import {
   ScatterChart,
@@ -36,11 +37,14 @@ export const Results: React.FC = () => {
 
   const [activeTab, setActiveTab] = useState<"table" | "effects" | "reliability">("table");
   const [showInvalid, setShowInvalid] = useState(false);
+  const [groupRepeats, setGroupRepeats] = useState(true);
+  const [selectedDatasetFilter, setSelectedDatasetFilter] = useState<string>("all");
 
   // Fetch results
-  const { data: results, isLoading: isResultsLoading } = useQuery({
-    queryKey: ["results", runId, showInvalid],
-    queryFn: () => fetchResults(runId, showInvalid),
+  const { data: results, isLoading: isResultsLoading, isFetching: isResultsFetching } = useQuery({
+    queryKey: ["results", runId, showInvalid, groupRepeats],
+    queryFn: () => fetchResults(runId, showInvalid, groupRepeats),
+    placeholderData: (previousData) => previousData,
   });
 
   // Fetch factor effects
@@ -71,7 +75,7 @@ export const Results: React.FC = () => {
   const [axisX, setAxisX] = useState<"latency_p50" | "memory_mb">("latency_p50");
   const [axisY, setAxisY] = useState<"f1" | "recall_at_k">("f1");
 
-  if (isResultsLoading) {
+  if (isResultsLoading && !results) {
     return (
       <div className="max-w-[1160px] mx-auto px-4 py-16 text-center text-xs font-mono text-ink-soft">
         <Loader2 className="w-6 h-6 animate-spin mx-auto mb-2 text-accent" />
@@ -83,10 +87,11 @@ export const Results: React.FC = () => {
   if (!results || results.length === 0) {
     return (
       <div className="max-w-[1160px] mx-auto px-4 py-12 space-y-6">
-        <div className="flex justify-end">
+        <div className="flex justify-end gap-3">
           <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line">
             <input
               type="checkbox"
+              aria-label="Show invalid runs"
               checked={showInvalid}
               onChange={(e) => setShowInvalid(e.target.checked)}
               className="rounded accent-accent"
@@ -104,8 +109,16 @@ export const Results: React.FC = () => {
     );
   }
 
+  // Filter by dataset if specified
+  const availableDatasets: string[] = Array.from(
+    new Set(results.map((r: any) => (r.dataset_id || "rajpurkar/squad_v2") as string))
+  );
+  const filteredResults = selectedDatasetFilter === "all"
+    ? results
+    : results.filter((r: any) => (r.dataset_id || "rajpurkar/squad_v2") === selectedDatasetFilter);
+
   // Calculate Pareto frontier points
-  const sortedByX = [...results].sort((a, b) => a[axisX] - b[axisX]);
+  const sortedByX = [...filteredResults].sort((a, b) => a[axisX] - b[axisX]);
   const paretoPoints: any[] = [];
   let maxYSoFar = -1;
 
@@ -118,7 +131,7 @@ export const Results: React.FC = () => {
   const paretoIds = new Set(paretoPoints.map((p) => p.config_id));
 
   // Sorted table items
-  const sortedResults = [...results].sort((a, b) => {
+  const sortedResults = [...filteredResults].sort((a, b) => {
     const valA = a[sortField];
     const valB = b[sortField];
     if (valA === valB) return 0;
@@ -126,118 +139,152 @@ export const Results: React.FC = () => {
     return sortAsc ? -1 : 1;
   });
 
-  const scatterData = results.map((r: any) => ({
+  const scatterData = filteredResults.map((r: any) => ({
     x: r[axisX],
     y: r[axisY],
-    name: `${r.language_model} (k=${r.top_k}, ${r.chunk_size}w)`,
+    name: `${r.language_model.split("/").pop()} (k=${r.top_k}, ${r.chunk_size}w)`,
     isPareto: paretoIds.has(r.config_id),
     raw: r,
   }));
 
   return (
-    <div className="max-w-[1160px] mx-auto px-4 py-8 page-transition space-y-12">
+    <div className="max-w-[1160px] mx-auto px-4 py-8 page-transition space-y-10">
       {/* Page Header */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
         <div>
-          <h1 className="font-serif text-[44px] font-bold text-ink leading-tight mb-2">
+          <h1 className="font-serif text-[40px] font-bold text-ink leading-tight mb-2">
             Results
           </h1>
-          <p className="text-ink-soft text-base max-w-[70ch]">
-            Measured trade-offs across chunk size, Top-K, model size and quantization, computed directly from stored evaluation runs.
+          <p className="text-ink-soft text-sm max-w-[70ch]">
+            Measured trade-offs across chunk size, Top-K, model size and quantization, computed directly from stored local benchmark runs.
           </p>
         </div>
-        <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line self-start md:self-auto shrink-0">
-          <input
-            type="checkbox"
-            checked={showInvalid}
-            onChange={(e) => setShowInvalid(e.target.checked)}
-            className="rounded accent-accent"
-          />
-          <span>Show invalid / contaminated runs</span>
-        </label>
+        <div className="flex flex-wrap items-center gap-3">
+          {isResultsFetching && (
+            <div className="flex items-center gap-1.5 text-[11px] font-mono text-ink-soft animate-pulse mr-1">
+              <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+              <span>Updating...</span>
+            </div>
+          )}
+          <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line">
+            <input
+              type="checkbox"
+              aria-label="Aggregate repeats"
+              checked={groupRepeats}
+              onChange={(e) => setGroupRepeats(e.target.checked)}
+              className="rounded accent-accent"
+            />
+            <Layers className="w-3.5 h-3.5 text-accent" />
+            <span>Aggregate repeats</span>
+          </label>
+          <label className="text-xs font-sans text-ink-soft flex items-center gap-1.5 cursor-pointer select-none bg-paper-raised px-3 py-2 rounded-lg border border-line">
+            <input
+              type="checkbox"
+              aria-label="Show invalid runs"
+              checked={showInvalid}
+              onChange={(e) => setShowInvalid(e.target.checked)}
+              className="rounded accent-accent"
+            />
+            <span>Show invalid runs</span>
+          </label>
+        </div>
       </div>
 
-      {/* ONE Primary Chart & Reading Help */}
+      {/* Interactive Pareto Scatter Plot */}
       <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-line">
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
           <div>
-            <span className="text-xs font-sans font-semibold text-sage-deep">Trade-offs</span>
-            <h2 className="font-serif text-2xl font-bold text-ink mt-0.5">Pareto efficiency frontier</h2>
-            <p className="text-xs text-ink-soft mt-1">
-              Points in red-orange represent the Pareto frontier: no other measured configuration provides both higher quality and lower resource cost.
+            <h2 className="font-serif text-xl font-bold text-ink flex items-center gap-2">
+              <span>Pareto Frontier Analysis</span>
+              <span className="text-xs font-sans font-semibold text-accent bg-accent/15 px-2 py-0.5 rounded">
+                {paretoPoints.length} Optimal Configs
+              </span>
+            </h2>
+            <p className="text-xs text-ink-soft">
+              Configurations on the frontier offer the best F1 accuracy for any given resource budget.
             </p>
           </div>
 
-          <div className="flex items-center gap-3 text-xs font-sans">
-            <label className="flex items-center gap-1.5">
-              <span className="text-ink-soft">X axis:</span>
+          <div className="flex items-center gap-4 text-xs font-sans">
+            <div className="flex items-center gap-1.5">
+              <span className="text-ink-soft">X-Axis:</span>
               <select
+                aria-label="Scatter chart X-axis metric"
                 value={axisX}
                 onChange={(e) => setAxisX(e.target.value as any)}
-                className="bg-paper border border-line rounded px-2 py-1 text-ink"
+                className="bg-paper border border-line rounded px-2 py-1 font-mono text-ink text-xs"
               >
-                <option value="latency_p50">Latency p50 (seconds)</option>
+                <option value="latency_p50">Latency p50 (ms)</option>
                 <option value="memory_mb">Peak Memory (MB)</option>
               </select>
-            </label>
-
-            <label className="flex items-center gap-1.5">
-              <span className="text-ink-soft">Y axis:</span>
+            </div>
+            <div className="flex items-center gap-1.5">
+              <span className="text-ink-soft">Y-Axis:</span>
               <select
+                aria-label="Scatter chart Y-axis metric"
                 value={axisY}
                 onChange={(e) => setAxisY(e.target.value as any)}
-                className="bg-paper border border-line rounded px-2 py-1 text-ink"
+                className="bg-paper border border-line rounded px-2 py-1 font-mono text-ink text-xs"
               >
-                <option value="f1">Token F1 Score</option>
+                <option value="f1">F1 Accuracy</option>
                 <option value="recall_at_k">Recall@K</option>
               </select>
-            </label>
+            </div>
           </div>
         </div>
 
-        {/* Scatter Chart */}
-        <div className="h-80 w-full bg-paper rounded-xl border border-line p-4">
+        <div className="h-72 w-full pt-4">
           <ResponsiveContainer width="100%" height="100%">
-            <ScatterChart margin={{ top: 20, right: 30, bottom: 20, left: 20 }}>
+            <ScatterChart margin={{ top: 10, right: 20, bottom: 20, left: 10 }}>
               <XAxis
                 type="number"
                 dataKey="x"
-                name={axisX === "latency_p50" ? "Latency p50 (s)" : "Memory (MB)"}
-                unit={axisX === "latency_p50" ? "s" : "MB"}
-                stroke="#5E574C"
-                fontSize={12}
-                tickLine={false}
+                name={axisX === "latency_p50" ? "Latency" : "Memory"}
+                unit={axisX === "latency_p50" ? "ms" : "MB"}
+                tick={{ fontSize: 11, fill: "var(--color-ink-soft)" }}
+                axisLine={{ stroke: "var(--color-line)" }}
               />
               <YAxis
                 type="number"
                 dataKey="y"
-                name={axisY === "f1" ? "Token F1" : "Recall@K"}
+                name={axisY === "f1" ? "F1 Score" : "Recall@K"}
                 domain={[0, 1]}
-                stroke="#5E574C"
-                fontSize={12}
-                tickLine={false}
+                tick={{ fontSize: 11, fill: "var(--color-ink-soft)" }}
+                axisLine={{ stroke: "var(--color-line)" }}
               />
               <Tooltip
                 cursor={{ strokeDasharray: "3 3" }}
-                content={({ payload }) => {
-                  if (!payload || !payload.length) return null;
-                  const d = payload[0].payload;
-                  return (
-                    <div className="bg-paper-raised p-3 rounded-lg border border-line text-xs font-mono text-ink shadow-md space-y-1">
-                      <p className="font-bold">{d.name}</p>
-                      <p>{axisY.toUpperCase()}: {d.y?.toFixed(3)}</p>
-                      <p>{axisX}: {d.x} {axisX === "latency_p50" ? "s" : "MB"}</p>
-                      {d.isPareto && <p className="text-accent font-bold">★ Pareto-optimal</p>}
-                    </div>
-                  );
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    const r = data.raw;
+                    return (
+                      <div className="bg-paper border border-line p-3 rounded-lg shadow-xl text-xs font-mono space-y-1 max-w-xs">
+                        <div className="font-bold text-ink">{r.language_model}</div>
+                        <div className="text-ink-soft text-[11px]">
+                          c={r.chunk_size} · k={r.top_k} · {r.quantization}
+                        </div>
+                        <div className="text-sage-deep font-semibold">F1: {r.f1.toFixed(3)}</div>
+                        <div className="text-ink-soft">
+                          Latency: {(r.latency_p50 / 1000).toFixed(2)}s · Mem: {Math.round(r.memory_mb)}MB
+                        </div>
+                        {data.isPareto && (
+                          <div className="text-accent text-[10px] font-sans font-bold pt-1">
+                            ★ On Pareto Frontier
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
                 }}
               />
               <Scatter data={scatterData}>
-                {scatterData.map((entry: any, index: number) => (
+                {scatterData.map((entry, index) => (
                   <Cell
                     key={`cell-${index}`}
-                    fill={entry.isPareto ? "#EA2E00" : "#9DBDB8"}
-                    r={entry.isPareto ? 8 : 5}
+                    fill={entry.isPareto ? "var(--color-accent)" : "var(--color-ink-soft)"}
+                    fillOpacity={entry.isPareto ? 0.9 : 0.4}
                   />
                 ))}
               </Scatter>
@@ -246,46 +293,72 @@ export const Results: React.FC = () => {
         </div>
       </div>
 
-      {/* Tabs: Table, Factor Effects, Reliability */}
-      <div className="space-y-6">
-        <div className="flex items-center gap-2 border-b border-line">
+      {/* Tabs Navigation */}
+      <div className="space-y-4">
+        <div className="flex border-b border-line gap-6 text-sm font-sans">
           {[
-            { id: "table", label: "Results Table", icon: <Table className="w-4 h-4" /> },
-            { id: "effects", label: "Factor Effects", icon: <BarChart2 className="w-4 h-4" /> },
-            { id: "reliability", label: "Reliability Lab", icon: <ShieldCheck className="w-4 h-4" /> },
+            { id: "table", label: "Measured Configurations", icon: Table },
+            { id: "effects", label: "Single-Factor Effects", icon: BarChart2 },
+            { id: "reliability", label: "Reliability Lab", icon: ShieldCheck },
           ].map((t) => {
+            const Icon = t.icon;
             const isActive = activeTab === t.id;
             return (
               <button
                 key={t.id}
                 type="button"
                 onClick={() => setActiveTab(t.id as any)}
-                className={`flex items-center gap-2 px-4 py-2.5 text-xs font-sans font-semibold transition-colors border-b-2 -mb-[1px] ${
+                className={`flex items-center gap-2 pb-3 font-semibold transition-colors border-b-2 -mb-px ${
                   isActive
-                    ? "border-accent text-accent bg-paper-raised"
-                    : "border-transparent text-ink-soft hover:text-ink hover:bg-paper-raised/50"
+                    ? "border-accent text-accent"
+                    : "border-transparent text-ink-soft hover:text-ink"
                 }`}
               >
-                {t.icon}
+                <Icon className="w-4 h-4" />
                 <span>{t.label}</span>
               </button>
             );
           })}
         </div>
 
-        {/* Tab 1: Table (shows 6 columns by default) */}
+        {/* Tab 1: Table (E11 + E12) */}
         {activeTab === "table" && (
           <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-4">
-            <div className="flex items-center justify-between pb-2 border-b border-line">
-              <h2 className="font-serif text-xl font-bold text-ink">Measured configurations</h2>
-              <span className="text-xs font-sans text-ink-soft">{results.length} configurations measured</span>
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-2 border-b border-line">
+              <div className="space-y-0.5">
+                <h2 className="font-serif text-xl font-bold text-ink">Configuration Performance Table</h2>
+                <p className="text-xs text-ink-soft">
+                  Comparing all empirical measurements across models, embeddings, chunk sizes, and quantization.
+                </p>
+              </div>
+
+              {/* Dataset Filter */}
+              <div className="flex items-center gap-2 text-xs font-sans">
+                <Filter className="w-3.5 h-3.5 text-ink-soft" />
+                <span className="text-ink-soft">Dataset:</span>
+                <select
+                  aria-label="Filter results by dataset"
+                  value={selectedDatasetFilter}
+                  onChange={(e) => setSelectedDatasetFilter(e.target.value)}
+                  className="bg-paper border border-line rounded px-2.5 py-1 text-ink font-mono text-xs"
+                >
+                  <option value="all">All Datasets ({results.length})</option>
+                  {availableDatasets.map((ds) => (
+                    <option key={ds} value={ds}>{ds}</option>
+                  ))}
+                </select>
+              </div>
             </div>
 
             <div className="overflow-x-auto">
               <table className="w-full text-left text-xs font-mono border-collapse">
                 <thead>
-                  <tr className="border-b border-line text-ink-soft">
-                    <th className="py-2.5 px-3">Configuration</th>
+                  <tr className="border-b border-line text-ink-soft select-none">
+                    <th className="py-2.5 px-3 font-sans font-semibold">Dataset</th>
+                    <th className="py-2.5 px-3 font-sans font-semibold">Model</th>
+                    <th className="py-2.5 px-3 font-sans font-semibold">Embedder</th>
+                    <th className="py-2.5 px-3 font-sans font-semibold">Configuration</th>
+                    <th className="py-2.5 px-3 font-sans font-semibold text-center">Repeats</th>
                     <th
                       className="py-2.5 px-3 cursor-pointer hover:text-ink"
                       onClick={() => {
@@ -320,38 +393,64 @@ export const Results: React.FC = () => {
                       </span>
                     </th>
                     <th className="py-2.5 px-3 font-sans font-semibold">Peak Memory</th>
-                    <th className="py-2.5 px-3 font-sans font-semibold">Sample (n)</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-line/60">
                   {sortedResults.map((row: any) => {
                     const isPareto = paretoIds.has(row.config_id);
+                    const lmShort = row.language_model.split("/").pop() || row.language_model;
+                    const emShort = row.embedding_model.split("/").pop() || row.embedding_model;
+                    const dsShort = row.dataset_id ? row.dataset_id.split("/").pop() : "squad_v2";
+
                     return (
                       <tr
                         key={row.config_id}
                         className={`hover:bg-paper/50 ${isPareto ? "bg-accent/5 font-medium" : ""}`}
                       >
+                        {/* Dataset column */}
                         <td className="py-2.5 px-3">
-                          <div className="flex items-center gap-2">
+                          <span className="text-[10px] font-sans font-semibold bg-paper border border-line px-1.5 py-0.5 rounded text-ink-soft">
+                            {dsShort}
+                          </span>
+                        </td>
+
+                        {/* Model column */}
+                        <td className="py-2.5 px-3 text-ink font-semibold">
+                          <div className="flex items-center gap-1.5">
                             {isPareto && (
-                              <span className="text-[10px] font-bold font-sans text-accent bg-accent/15 px-1 py-0.5 rounded">
+                              <span className="text-[9px] font-bold font-sans text-accent bg-accent/15 px-1 py-0.5 rounded">
                                 PARETO
                               </span>
                             )}
-                            {!row.is_valid && (
-                              <span
-                                className="text-[10px] font-medium font-sans text-ochre bg-ochre/20 px-1 py-0.5 rounded"
-                                title={row.invalid_reason || "Contaminated / invalid run"}
-                              >
-                                INVALID
-                              </span>
-                            )}
-                            <span>
-                              c={row.chunk_size}, k={row.top_k}
-                              {row.quantization !== "none" ? ` (${row.quantization})` : ""}
-                            </span>
+                            <span title={row.language_model}>{lmShort}</span>
                           </div>
                         </td>
+
+                        {/* Embedder column */}
+                        <td className="py-2.5 px-3 text-ink-soft">
+                          <span title={row.embedding_model}>{emShort}</span>
+                        </td>
+
+                        {/* Config (Chunk, Top-K, Quant) */}
+                        <td className="py-2.5 px-3">
+                          <span className="text-ink">
+                            c={row.chunk_size}, k={row.top_k}
+                            {row.quantization && row.quantization !== "none" ? ` (${row.quantization})` : ""}
+                          </span>
+                        </td>
+
+                        {/* Repeats column (E11) */}
+                        <td className="py-2.5 px-3 text-center">
+                          {row.repeats > 1 ? (
+                            <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-sage/20 text-sage-deep font-bold border border-sage/40">
+                              N={row.repeats}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] font-mono text-ink-soft">N=1</span>
+                          )}
+                        </td>
+
+                        {/* F1 Score */}
                         <td className="py-2.5 px-3">
                           <MetricValue
                             value={row.f1}
@@ -359,29 +458,42 @@ export const Results: React.FC = () => {
                             source="measured"
                             ciLower={row.ci_lower_f1}
                             ciUpper={row.ci_upper_f1}
+                            formatter={() =>
+                              row.f1_std != null
+                                ? `${row.f1.toFixed(3)} ± ${row.f1_std.toFixed(3)}`
+                                : row.f1.toFixed(3)
+                            }
                           />
                         </td>
+
+                        {/* Exact Match */}
                         <td className="py-2.5 px-3">
                           <MetricValue value={row.em} n={row.n} source="measured" />
                         </td>
+
+                        {/* Latency (E7 & E8) */}
                         <td className="py-2.5 px-3">
                           <MetricValue
                             value={row.latency_p50}
-                            unit="s"
+                            unit="ms"
                             n={row.n}
-                            source="api"
+                            source="local"
+                            formatter={() =>
+                              row.latency_p50_std != null
+                                ? `${(row.latency_p50 / 1000).toFixed(2)} ± ${(row.latency_p50_std / 1000).toFixed(2)} s`
+                                : undefined
+                            }
                           />
                         </td>
+
+                        {/* Peak Memory (E10) */}
                         <td className="py-2.5 px-3">
                           <MetricValue
                             value={row.memory_mb}
                             unit="MB"
                             n={row.n}
-                            source={row.memory_source === "measured" ? "measured" : "estimated"}
+                            source={row.memory_source?.includes("measured") || row.memory_source?.includes("RAM") ? "measured" : "estimated"}
                           />
-                        </td>
-                        <td className="py-2.5 px-3 text-ink-soft">
-                          n={row.n}
                         </td>
                       </tr>
                     );
@@ -394,52 +506,138 @@ export const Results: React.FC = () => {
 
         {/* Tab 2: Factor Effects */}
         {activeTab === "effects" && (
-          <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
+          <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-8">
             <div>
-              <h2 className="font-serif text-xl font-bold text-ink">Single-factor marginal effects</h2>
+              <h2 className="font-serif text-xl font-bold text-ink">Single-Factor Marginal Effects & Paired Deltas</h2>
               <p className="text-xs text-ink-soft">
-                Average delta in F1, latency, and memory when holding all other factors constant.
+                Derived by pairing configurations that hold all other variables constant, isolating true marginal causal impact.
               </p>
             </div>
 
-            {effectsData && (
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* Top-K Effect */}
-                <div className="p-4 bg-paper rounded-lg border border-line space-y-3">
-                  <h3 className="font-serif text-base font-bold text-ink">Top-K marginal yield</h3>
-                  <p className="text-xs text-ink-soft">
-                    Marginal F1 gain per additional retrieved chunk vs added latency cost:
-                  </p>
-                  <div className="space-y-2">
-                    {effectsData.top_k_effects?.map((eff: any) => (
-                      <div key={eff.top_k} className="flex justify-between items-center text-xs font-mono p-2 bg-paper-raised rounded border border-line">
-                        <span className="font-bold">K = {eff.top_k}</span>
-                        <div className="flex gap-4">
-                          <span className="text-sage-deep">Avg F1: {eff.avg_f1.toFixed(3)}</span>
-                          <span className="text-ink-soft">Lat: {eff.avg_latency_s.toFixed(2)}s</span>
-                        </div>
-                      </div>
-                    ))}
+            {effectsData?.paired_effects ? (
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                {/* Chunk Size Paired Effect */}
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-sans font-semibold text-accent">Chunk Size Effect</span>
+                    <span className="text-[10px] font-mono bg-paper-raised px-1.5 py-0.5 rounded border border-line">
+                      512 vs 256
+                    </span>
                   </div>
+                  {effectsData.paired_effects.chunk_size?.pairs_count > 0 ? (
+                    <div className="space-y-3">
+                      <div className="text-lg font-bold font-mono text-ink">
+                        Δ F1: {effectsData.paired_effects.chunk_size.delta_f1 > 0 ? "+" : ""}
+                        {effectsData.paired_effects.chunk_size.delta_f1.toFixed(3)}
+                      </div>
+                      <p className="text-xs text-ink-soft leading-relaxed">
+                        {effectsData.paired_effects.chunk_size.takeaway}
+                      </p>
+                      <div className="text-[11px] font-mono text-ink-soft pt-2 border-t border-line">
+                        Pairs measured: {effectsData.paired_effects.chunk_size.pairs_count}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-ink-soft">
+                        No paired 256 vs 512 sweep configurations found with identical parameters.
+                      </p>
+                      <Link to="/benchmark" className="text-xs text-accent underline block pt-1">
+                        Run paired sweep in Benchmark →
+                      </Link>
+                    </div>
+                  )}
                 </div>
 
-                {/* Chunk Size Effect */}
-                <div className="p-4 bg-paper rounded-lg border border-line space-y-3">
-                  <h3 className="font-serif text-base font-bold text-ink">Chunk size efficiency</h3>
-                  <p className="text-xs text-ink-soft">
-                    Trade-off between retrieval specificity and context window budget:
-                  </p>
-                  <div className="space-y-2">
-                    {effectsData.chunk_size_effects?.map((eff: any) => (
-                      <div key={eff.chunk_size} className="flex justify-between items-center text-xs font-mono p-2 bg-paper-raised rounded border border-line">
-                        <span className="font-bold">{eff.chunk_size} words</span>
-                        <div className="flex gap-4">
-                          <span className="text-sage-deep">Avg F1: {eff.avg_f1.toFixed(3)}</span>
-                          <span className="text-ink-soft">Lat: {eff.avg_latency_s.toFixed(2)}s</span>
-                        </div>
-                      </div>
-                    ))}
+                {/* Top-K Paired Effect */}
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-sans font-semibold text-accent">Top-K Retrieval Depth</span>
+                    <span className="text-[10px] font-mono bg-paper-raised px-1.5 py-0.5 rounded border border-line">
+                      k=3 vs k=1
+                    </span>
                   </div>
+                  {effectsData.paired_effects.top_k?.pairs_count > 0 ? (
+                    <div className="space-y-3">
+                      <div className="text-lg font-bold font-mono text-ink">
+                        Δ F1: {effectsData.paired_effects.top_k.delta_f1 > 0 ? "+" : ""}
+                        {effectsData.paired_effects.top_k.delta_f1.toFixed(3)}
+                      </div>
+                      <p className="text-xs text-ink-soft leading-relaxed">
+                        {effectsData.paired_effects.top_k.takeaway}
+                      </p>
+                      <div className="text-[11px] font-mono text-ink-soft pt-2 border-t border-line">
+                        Pairs measured: {effectsData.paired_effects.top_k.pairs_count}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-ink-soft">
+                        No paired k=1 vs k=3 configurations found with identical parameters.
+                      </p>
+                      <Link to="/benchmark" className="text-xs text-accent underline block pt-1">
+                        Run paired sweep in Benchmark →
+                      </Link>
+                    </div>
+                  )}
+                </div>
+
+                {/* Quantization Paired Effect */}
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-3">
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-sans font-semibold text-accent">Quantization Precision</span>
+                    <span className="text-[10px] font-mono bg-paper-raised px-1.5 py-0.5 rounded border border-line">
+                      Q8_0 vs Q4_K_M
+                    </span>
+                  </div>
+                  {effectsData.paired_effects.quantization?.pairs_count > 0 ? (
+                    <div className="space-y-3">
+                      <div className="text-lg font-bold font-mono text-ink">
+                        Δ F1: {effectsData.paired_effects.quantization.delta_f1 > 0 ? "+" : ""}
+                        {effectsData.paired_effects.quantization.delta_f1.toFixed(3)}
+                      </div>
+                      <p className="text-xs text-ink-soft leading-relaxed">
+                        {effectsData.paired_effects.quantization.takeaway}
+                      </p>
+                      <div className="text-[11px] font-mono text-ink-soft pt-2 border-t border-line">
+                        Pairs measured: {effectsData.paired_effects.quantization.pairs_count}
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="text-xs text-ink-soft">
+                        No paired Q4 vs Q8 configurations found with identical parameters.
+                      </p>
+                      <Link to="/benchmark" className="text-xs text-accent underline block pt-1">
+                        Run paired sweep in Benchmark →
+                      </Link>
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+
+            {/* Marginal Averages by Factor */}
+            {effectsData?.factors && (
+              <div className="space-y-4 pt-4 border-t border-line">
+                <h3 className="font-serif text-lg font-bold text-ink">Marginal Levels Performance</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                  {Object.entries(effectsData.factors).map(([factorName, levels]: [string, any]) => (
+                    <div key={factorName} className="p-4 bg-paper rounded-lg border border-line space-y-2 text-xs font-mono">
+                      <div className="font-bold text-ink font-sans capitalize pb-1 border-b border-line">
+                        {factorName.replace("_", " ")}
+                      </div>
+                      <div className="space-y-1.5 pt-1">
+                        {levels.map((lvl: any) => (
+                          <div key={lvl.level} className="flex justify-between items-center p-1.5 bg-paper-raised rounded border border-line">
+                            <span className="font-bold">{lvl.level}</span>
+                            <span className="text-sage-deep">F1 {lvl.avg_f1.toFixed(3)}</span>
+                            <span className="text-ink-soft">{(lvl.avg_latency_ms / 1000).toFixed(2)}s</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
                 </div>
               </div>
             )}
@@ -449,61 +647,61 @@ export const Results: React.FC = () => {
         {/* Tab 3: Reliability Lab */}
         {activeTab === "reliability" && (
           <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
-            <div className="flex items-center justify-between pb-4 border-b border-line">
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 pb-4 border-b border-line">
               <div>
-                <h2 className="font-serif text-xl font-bold text-ink">Reliability detector audit</h2>
+                <h2 className="font-serif text-xl font-bold text-ink">Reliability Detector Audit</h2>
                 <p className="text-xs text-ink-soft">
-                  Evaluated using question-split cross-validation to prevent context leakage.
+                  Evaluated using question-split cross-validation to prevent context leakage across train/test splits.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={() => trainMutation.mutate()}
                 disabled={trainMutation.isPending}
-                className="btn-secondary text-xs"
+                className="btn-secondary text-xs flex items-center gap-2 px-3 py-2"
               >
                 <Sparkles className="w-4 h-4 text-accent" />
-                <span>{trainMutation.isPending ? "Training..." : "Train checker on my runs"}</span>
+                <span>{trainMutation.isPending ? "Training detector..." : "Train checker on clean runs"}</span>
               </button>
             </div>
 
             {reliabilityData ? (
-              <div className="space-y-6">
-                <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-xs font-mono">
-                  <div className="p-3 bg-paper rounded border border-line">
-                    <span className="text-ink-soft block font-sans">Ensemble AUROC</span>
-                    <span className="font-bold text-ink text-base">{reliabilityData.auroc.toFixed(3)}</span>
-                    <span className="text-[10px] text-ink-soft block font-sans">Baseline: {reliabilityData.baseline_auroc.toFixed(3)}</span>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-1.5">
+                  <span className="text-xs font-sans text-ink-soft">Detector AUROC</span>
+                  <div className="text-2xl font-bold font-mono text-ink">
+                    {reliabilityData.auroc?.toFixed(3) || "—"}
                   </div>
-                  <div className="p-3 bg-paper rounded border border-line">
-                    <span className="text-ink-soft block font-sans">20% Rejection Caught</span>
-                    <span className="font-bold text-sage-deep text-base">
-                      {(reliabilityData.rejection_20_caught * 100).toFixed(1)}%
-                    </span>
-                    <span className="text-[10px] text-ink-soft block font-sans">Errors eliminated</span>
-                  </div>
-                  <div className="p-3 bg-paper rounded border border-line">
-                    <span className="text-ink-soft block font-sans">Abstention Rate</span>
-                    <span className="font-bold text-ink text-base">
-                      {(reliabilityData.abstention_rate * 100).toFixed(1)}%
-                    </span>
-                    <span className="text-[10px] text-ink-soft block font-sans">Unanswerable caught</span>
-                  </div>
-                  <div className="p-3 bg-paper rounded border border-line">
-                    <span className="text-ink-soft block font-sans">Sample Size</span>
-                    <span className="font-bold text-ink text-base">n = {reliabilityData.n}</span>
-                    <span className="text-[10px] text-ink-soft block font-sans">Labelled answers</span>
-                  </div>
+                  <p className="text-[11px] text-ink-soft">
+                    Discriminative ability to flag hallucinated or ungrounded responses.
+                  </p>
                 </div>
-
-                {reliabilityData.n < 300 && (
-                  <div className="p-3 bg-ochre/15 border border-ochre/40 rounded-lg text-ochre text-xs flex items-center gap-2">
-                    <AlertTriangle className="w-4 h-4 shrink-0" />
-                    <span>Small sample: fewer than 300 labelled answers available in the workspace. AUROC and abstention values should be interpreted with caution.</span>
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-1.5">
+                  <span className="text-xs font-sans text-ink-soft">Errors Caught @ 20% Rejection</span>
+                  <div className="text-2xl font-bold font-mono text-sage-deep">
+                    {reliabilityData.rejection_20_caught
+                      ? `${(reliabilityData.rejection_20_caught * 100).toFixed(1)}%`
+                      : "—"}
                   </div>
-                )}
+                  <p className="text-[11px] text-ink-soft">
+                    Percentage of incorrect model answers eliminated by rejecting top 20% lowest confidence.
+                  </p>
+                </div>
+                <div className="p-5 bg-paper rounded-xl border border-line space-y-1.5">
+                  <span className="text-xs font-sans text-ink-soft">Sample Count</span>
+                  <div className="text-2xl font-bold font-mono text-ink">
+                    {reliabilityData.n || 0} questions
+                  </div>
+                  <p className="text-[11px] text-ink-soft">
+                    Clean audited model responses evaluated across splits.
+                  </p>
+                </div>
               </div>
-            ) : null}
+            ) : (
+              <div className="p-6 bg-paper rounded-xl border border-line text-xs font-mono text-ink-soft text-center">
+                Click "Train checker on clean runs" to compute empirical AUROC and selective prediction metrics.
+              </div>
+            )}
           </div>
         )}
       </div>

@@ -1,10 +1,10 @@
 """Hardware auto-detection and profile matching for local RAG benchmarking."""
 from __future__ import annotations
 
-import os
 import platform
-import psutil
 from typing import Any
+
+import psutil
 
 
 def detect_hardware() -> dict[str, Any]:
@@ -55,7 +55,8 @@ def detect_hardware() -> dict[str, Any]:
             max_recommended_params = 7.0
             max_recommended_quant = "Q4_K_M"
         else:
-            profile = f"{gpu_info['name']} ({int(vram_total_mb / 1024)}GB)"
+            vram_gb = int(vram_total_mb / 1024) if vram_total_mb else 0
+            profile = f"{gpu_info['name']} ({vram_gb}GB)"
             max_recommended_params = 14.0
             max_recommended_quant = "Q8_0"
         device = "cuda"

@@ -5,18 +5,19 @@ import asyncio
 import datetime
 import json
 import uuid
-from typing import Any, AsyncGenerator, Optional
+from collections.abc import AsyncGenerator
+from typing import Any
+
 import numpy as np
-from sqlalchemy import select, update
+from sqlalchemy import update
 
 from app.db import AsyncSessionLocal
 from app.eval.bootstrap import compute_bootstrap_ci
 from app.hf.hub import get_model_details
-from app.models import Answer, ConfigMetrics, IndexRecord, Job, Run, RunConfig
+from app.models import Answer, ConfigMetrics, Job, Run
 from app.pipeline.chunking import chunk_text
 from app.pipeline.index import VectorIndex
 from app.runners.hosted import run_single_question
-from app.runners.local import measure_process_memory_mb
 
 
 class RunManager:
@@ -115,6 +116,9 @@ async def execute_run_task(
 
                 # Embed chunks
                 if all_chunks:
+                    # Limit chunks to 300 for snappy benchmark indexing
+                    if len(all_chunks) > 300:
+                        all_chunks = all_chunks[:300]
                     chunk_texts = [c["text"] for c in all_chunks]
                     from app.pipeline.embed import embed_texts
                     emb_res = await embed_texts(model_id=embedding_model, texts=chunk_texts)

@@ -132,23 +132,26 @@ Open `http://localhost:5173`.
 
 ## 8. Verification & Test Suites
 
-The test suite validates data integrity, zero heuristic leakage, and accessibility:
+The unified verification script validates end-to-end data integrity, type safety, linting, unit tests, and accessibility:
+
+```powershell
+# Windows PowerShell
+.\scripts\verify.ps1
+```
 
 ```bash
-# 1. Run diagnostic on Hugging Face token
-python scripts/check_token.py
-
-# 2. Audit all runs in database (marks heuristic fallbacks as invalid)
-python scripts/audit_runs.py
-
-# 3. Backend pytest suite (15 integration & unit tests)
-cd backend
-.\.venv\Scripts\pytest.exe -v
-
-# 4. Frontend Playwright E2E & Axe accessibility suite (42 tests)
-cd frontend
-npx playwright test
+# Linux / macOS Bash
+./scripts/verify.sh
 ```
+
+The pipeline executes the 7 verification stages sequentially:
+1. `tsc --noEmit` (Frontend TypeScript compilation)
+2. `npm run lint` (ESLint checks)
+3. `npm run build` (Vite production bundle verification)
+4. `ruff check app tests` (Backend linting & style)
+5. `mypy app` (Strict backend typing)
+6. `pytest` (Backend pipeline, runners, and endpoints)
+7. `playwright test` (50 end-to-end and WCAG accessibility tests across Desktop 1440x900 and Mobile 390x844)
 
 ---
 

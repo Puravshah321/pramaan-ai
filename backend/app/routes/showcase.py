@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from fastapi import APIRouter, Depends
 from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,7 +43,7 @@ async def get_latest_showcase(
     # Fetch context document if possible
     doc = None
     if ans.retrieved_chunk_ids and len(ans.retrieved_chunk_ids) > 0:
-        first_chunk_id = ans.retrieved_chunk_ids[0]
+        ans.retrieved_chunk_ids[0]
         # Chunk id format is typically doc_id_chunk_index
         doc_stmt = select(Document).limit(1)
         doc_res = await session.execute(doc_stmt)

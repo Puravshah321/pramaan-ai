@@ -1,6 +1,12 @@
 """FastAPI application entry point for Pramaan AI."""
 from __future__ import annotations
 
+import sys
+
+if sys.platform == "win32":
+    import asyncio
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+
 import time
 import uuid
 from contextlib import asynccontextmanager
@@ -22,9 +28,9 @@ from app.routes import (
     results,
     runs,
     setup,
+    showcase,
     stats,
     try_it,
-    showcase,
 )
 
 

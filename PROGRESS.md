@@ -1,35 +1,40 @@
 # PROGRESS.md
 
-## Iteration Number: 2
-**Current Stage:** REDESIGN v5 - Full Defect Resolution & Verification Complete
+## Iteration Number: 3 (REDESIGN v8: Event Loop Concurrency, Dual-Stack Networking, Robust Dataset Adapters & Result Filtering)
+**Current Stage:** Verification & Complete
 
-### Audit & Resolution Summary
+### Done vs Missing Table (All Bugs E1 – E12 & Local Runner Stability Resolved)
 
-| Item / Finding | Status | Observed Initial State | Final Implemented & Verified Resolution |
-|:---|:---:|:---|:---|
-| **F1. Hardware Presets on Recommend** | **RESOLVED** | Missing presets; only manual slider shown; lacked chip detection and verified specs. | Added `GET /api/hardware` endpoint and `backend/app/data/hardware_profiles.json` (32 verified profiles with TechPowerUp, Apple, NVIDIA, and JEDEC sources). Added "Your machine" auto-detected chip, grouped preset chips (RTX 3060, Apple M3/M4, CPU RAM), search input, hidden-by-default manual slider under "Custom Limits", and latency honesty disclaimer. |
-| **F2. Token & Router Health Diagnosis** | **RESOLVED** | Claimed token lacked permissions even when Inference Providers was enabled (actually returned HTTP 402 credits exhausted). | Re-reads `backend/.env` dynamically on every request. Implemented 8-case diagnostic system in `health.py` and `scripts/check_token.py`. Added `POST /api/health/recheck`. Updated frontend Home and Models with dismissible, session-stored banner featuring "Re-check connection" loading button and direct links to Hugging Face billing/tokens. |
-| **F3. Zero Heuristic Answers in Showcase/Home** | **RESOLVED** | Extractive heuristic verbatim answer from `test_doc.pdf` with "100% words matched" and run `run_17f0dac1` (0.473 F1) contaminated. | Invalidated `run_17f0dac1` and all heuristic/failed runs in `scripts/audit_runs.py`. `GET /api/showcase/latest` now strictly serves real answers from valid runs (`Run.is_valid == True`). Home card displays "Answered by <model> via <runner>" with clean empty state when no data exists. Verbatim copy detector discounts lexical support in reliability scoring. |
-| **F4. Models Page Redesign & Live Compare** | **RESOLVED** | ModelPicker showed green tick for "local runner only"; Compare models collapsed & empty; QA datasets section empty with no initial suggestions. | Redesigned Active Setup into 2 compact rows with clear badges ("Ready (local GGUF)", "Ready (hosted)", "Needs fix" with exact error). Comparison table is OPEN BY DEFAULT, pre-filled with active setup, displays popular sub-4B models with 1-click addition, GGUF memory fits, and a "Test" button per row. Suggested QA datasets (SQuAD v2, HotpotQA, TriviaQA, MS MARCO) load immediately on mount. |
-| **F5. Home Hero Dimensions & Typography** | **RESOLVED** | Headline wrapped to 4 tall lines, pushing evidence card and buttons below the fold on 1440x900. | Changed headline font size to `clamp(44px, 5.5vw, 76px)` with `lineHeight: 1.04` (max 3 lines at 1440, max 5 at 390). Changed hero container to content-fit `min-h-[560px] py-10 md:py-14` so evidence card and CTA buttons fit on 1440x900 without scrolling. |
-| **Part 6. Recommend Integrity** | **RESOLVED** | Recommendation admitted all runs without completion checks. | Added threshold requiring $\ge 80\%$ question completion rate. Added minimum 3 setups check before making comparative Pareto-optimal claims. Displays sample size warning when $n < 100$. |
-| **Part 7. Real Benchmark Runs & Reports** | **RESOLVED** | Only contaminated or incomplete runs in reporting. | Clean, audited runs preserved: `run_6d67c8c2` (Q4_K_M, F1 0.316, 220 MB RAM, 0 failed calls) and `run_48353e7c` (Q8_0, F1 0.305, 1267 MB RAM, 0 failed calls). Regenerated all figures, CSV exports, and `docs/report_data.json` via `scripts/make_report.py`. |
-| **Part 8. Test Suites & Professional README** | **RESOLVED** | Test suite needed coverage for new endpoints, hardware profiles, and responsive mobile layouts. | Backend pytest suite passes 15/15 tests (including health, hardware, setup, stats, showcase, recommend, HF live). Frontend Playwright suite passes 42/42 tests at both 1440x900 and 390x844 viewports with zero horizontal overflow and zero axe accessibility violations. Professional README written (165 lines). Zero secrets committed. |
+| Bug / Component | Description | Status | Verification & Resolution Details |
+|:---|:---|:---:|:---|
+| **E1** | Dataset ingest 500 error (`UNIQUE constraint failed: documents.id`) | **DONE** | In `backend/app/routes/corpora.py`, added atomic deletion of prior `Question` and `Document` rows matching `clean_id` before inserting, and generated content-hashed unique primary keys (`doc_{clean_id}_{idx}_{p_hash}`). Verified with clean ingestion of SQuAD v2.0 validation split. |
+| **E2** | Duplicate answers in preview (e.g. `France,France,France`) | **DONE** | In `backend/app/hf/datasets.py` and `frontend/src/pages/Models.tsx`, deduplicated answers using `list(dict.fromkeys(answer_texts))`. Empty answers display `"No answer in the passage (unanswerable)"`. |
+| **E3** | Ingestion dialog defaults to `train` split | **DONE** | In `frontend/src/pages/Models.tsx`, default `selectedSplit` initialized to `"validation"`, with clear explanation: `"Defaults to validation split for honest benchmark evaluation"`. Dynamically passed to `fetchDatasetRows`. |
+| **E4** | "Start benchmark run" fails with 500 error | **DONE** | Created schema migration and updated `backend/app/db.py` to auto-inspect and sync columns (`job_type`, `progress`, `message`, `payload_json`, `result_json`). Jobs enqueue, execute, and stream status cleanly. |
+| **E5** | Benchmark says "All setups fit within 4 GB" | **DONE** | In `frontend/src/pages/Benchmark.tsx`, dynamically bound `memoryLimitGb` to detected GPU budget from `/api/hardware` (`4.9 GB` for detected RTX 4050 6GB), showing explicit source attribution (`"Source: Auto-detected NVIDIA GeForce RTX 4050 Laptop GPU (4.9 GB budget)"`). |
+| **E6** | Estimated benchmark duration invented (`~0.2 min (10s)`) | **DONE** | In `backend/app/routes/runs.py` (`preview_run`), replaced hardcoded `0.5s` multiplier with SQLite query for historical median latency of the model. When unmeasured, returns `null` and displays `"Unknown until the first run"`. |
+| **E7** | Latency values displayed as `2198.395 s` | **DONE** | In `frontend/src/components/MetricValue.tsx`, latency passed in ms is formatted dynamically: `< 1000 ms` as integer `X ms`, and `≥ 1000 ms` as `(X / 1000).toFixed(2) s`. Tested across Desktop and Mobile viewports. |
+| **E8** | Results rows labeled "API latency" | **DONE** | In `MetricValue.tsx`, changed latency source label to `"Local latency"` and updated `Results.tsx` to pass `source="local"`. No misleading "API" claims in local-only mode. |
+| **E9** | Unrounded floats for F1 (`0.3641902418187247`) | **DONE** | In `MetricValue.tsx`, defaulted all floating-point evaluation metrics to 3 decimal places (`toFixed(3)`). |
+| **E10** | Peak Memory mixes Estimated and Measured; 220 MB anomaly | **DONE** | Added audit rule in `scripts/audit_runs.py` flagging runs with `< 250 MB` memory as contaminated (idle DWM baseline artifact). In `Results.tsx`, separated and labelled `RAM (RSS)` and `VRAM (pynvml)`. |
+| **E11** | Identical configurations listed repeatedly | **DONE** | In `backend/app/routes/results.py`, implemented repeat aggregation by `config_hash`. Returns mean $\pm$ standard deviation across repeats (`repeats: N`, `f1_std`, `latency_p50_std`). In `frontend/src/pages/Results.tsx`, added "Aggregate repeats" toggle and `N={row.repeats}` badge. |
+| **E12** | Results table missing Dataset, Embedder, and LM columns | **DONE** | In `frontend/src/pages/Results.tsx`, added explicit Dataset, Model, Embedder, Configuration, and Repeats columns, along with a dataset filter dropdown. |
+| **S7** | Results page checkboxes freeze UI / reload spinner hangs | **DONE** | Replaced synchronous llama-cpp calls with non-blocking threaded execution (`asyncio.to_thread`), batching embeddings in groups of 16 with cooperative event loop yielding. Added `placeholderData: (previousData) => previousData` in `Results.tsx` so checkbox toggling never unmounts or vanishes the table. |
+| **S8** | Ingestion of live hub datasets (TriviaQA, HotpotQA, MS MARCO) failed | **DONE** | Built dedicated schema adapters in `backend/app/datasets/adapters/` (`trivia_qa.py`, `hotpot_qa.py`, `ms_marco.py`). Normalized answers, extracted context cleanly, truncated at sentence boundaries (max 2,500 chars), and capped vector index benchmark chunks to 300 to prevent runaway embedding loops. |
+| **S9** | Browser connection refused (`localhost:5173` unreachable on Edge/Chrome) | **DONE** | Configured dual-stack IPv4/IPv6 socket binding (`host: '::'`) in `frontend/vite.config.ts`, ensuring that both `::1` and `127.0.0.1` are served seamlessly. Pointed proxy explicitly to `127.0.0.1:8000`. |
+| **S10** | GGML assertion error: `tensor read out of bounds` on concurrent inference | **DONE** | Added event-loop-bound `asyncio.Lock` (`get_inference_lock()`) protecting llama-cpp-python model and embedder execution, serializing C++ computation graphs and preventing thread safety race conditions. |
+| **S11** | Default active setup missing on fresh installation | **DONE** | In `backend/app/routes/setup.py`, set robust defaults to verified local models (`Qwen/Qwen2.5-0.5B-Instruct` and `BAAI/bge-small-en-v1.5`), ensuring instant readiness out of the box without requiring manual setup. |
 
 ---
 
-## REDESIGN v5 Checklist Status
+### Verification Pipeline Summary (`scripts/verify.ps1`)
 
-- [x] 1. Part 1: Created `scripts/check_token.py` CLI diagnostic
-- [x] 2. Part 1: Updated `backend/app/routes/health.py` with dynamic `.env` reading, live router model check, 8-case diagnosis, and `POST /api/health/recheck`
-- [x] 3. Part 1: Updated Frontend Home & Models with dismissible token banner, exact diagnostic message, and "Re-check connection" button
-- [x] 4. Part 2: Audited runs with `scripts/audit_runs.py` to invalidate `run_17f0dac1` (F1 0.473) and any run with heuristic answers; fixed `showcase.py` to only serve valid real model answers; updated reliability features to flag verbatim copies
-- [x] 5. Part 3: Created verified `backend/app/data/hardware_profiles.json` with 32 profiles, real specs & sources (RTX 3060, Apple M1-M4, cloud GPUs, CPU)
-- [x] 6. Part 3: Created `GET /api/hardware` endpoint with auto-detection & hardware profiles
-- [x] 7. Part 3: Redesigned `frontend/src/pages/Recommend.tsx` with "Your machine" chip, grouped presets, search box, hidden-by-default custom slider, and target hardware latency disclaimer
-- [x] 8. Part 4: Redesigned `frontend/src/pages/Models.tsx`: 2-row Active Setup with real status badges, pre-filled & live open Compare Models with "Run quick test", and immediately loaded live dataset cards
-- [x] 9. Part 5: Fixed Home Hero typography (`clamp(44px, 5.5vw, 76px)`, line-height 1.04, max 3 lines) and content-fit min-height 560px
-- [x] 10. Part 6: Updated Recommend backend logic for >=80% answered threshold and minimum 3 setups rule
-- [x] 11. Part 7: Verified real runs and executed `scripts/make_report.py` (exports updated)
-- [x] 12. Part 8: Full backend pytest (15/15 green) and Playwright multi-viewport suite (42/42 green)
-- [x] 13. Part 8: Executive README (<600 lines), zero secrets committed, pushed to GitHub main
+- **[1/7] Frontend TypeScript Check (`tsc --noEmit`):** PASSED (0 errors)
+- **[2/7] Frontend Lint Check (`npm run lint`):** PASSED (0 errors)
+- **[3/7] Frontend Production Build (`npm run build`):** PASSED (Built successfully in < 1s)
+- **[4/7] Backend Linter (`ruff check app tests`):** PASSED (All checks passed)
+- **[5/7] Backend Type Checker (`mypy app`):** PASSED (52 source files type checked with 0 errors)
+- **[6/7] Backend Pytest Suite (`pytest`):** PASSED (20 passed in 8.94s)
+- **[7/7] Playwright End-to-End Suite:** PASSED (All 50 tests passed across Desktop 1440x900 and Mobile 390x844 viewports, including full Axe accessibility scans)
+
+**Overall Status: COMPLETE (100% Green)**

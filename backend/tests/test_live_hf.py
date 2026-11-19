@@ -1,10 +1,10 @@
 """Live Hugging Face integration tests (run when HF_TOKEN or router access is available)."""
-import os
 import pytest
-from app.hf.hub import search_models, get_model_details
-from app.hf.datasets import search_datasets, get_dataset_splits_and_rows
-from app.hf.inference import generate_text, compute_embeddings
+
 from app.config import settings
+from app.hf.datasets import get_dataset_splits_and_rows
+from app.hf.hub import get_model_details, search_models
+from app.hf.inference import compute_embeddings, generate_text
 
 has_token = bool(settings.hf_token and settings.hf_token.strip())
 

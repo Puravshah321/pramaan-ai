@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from "react";
-import { Link } from "react-router-dom";
+import { Link, useNavigate } from "react-router-dom";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   fetchSetup,
@@ -7,8 +7,13 @@ import {
   updateSetup,
   fetchModelDetails,
   testModelInference,
+  searchModels,
   searchDatasets,
-  recheckHealth,
+  fetchDatasetRows,
+  loadDatasetIntoCorpus,
+  fetchActiveDataset,
+  fetchLocalModels,
+  downloadLocalModel,
 } from "../api/client";
 import { ModelPicker } from "../components/ModelPicker";
 import {
@@ -26,11 +31,15 @@ import {
   ExternalLink,
   Cpu,
   Zap,
+  HardDrive,
+  Download,
+  BookOpen,
 } from "lucide-react";
 import axios from "axios";
 
 export const Models: React.FC = () => {
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: setup } = useQuery({
     queryKey: ["setup"],
@@ -42,8 +51,18 @@ export const Models: React.FC = () => {
     queryFn: fetchHealth,
   });
 
+  const { data: activeDataset } = useQuery({
+    queryKey: ["activeDataset"],
+    queryFn: fetchActiveDataset,
+  });
+
+  const { data: localModels, refetch: refetchLocalModels } = useQuery({
+    queryKey: ["localModels"],
+    queryFn: fetchLocalModels,
+  });
+
   const [activeEmbedding, setActiveEmbedding] = useState(
-    setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"
+    setup?.embedding_model || "BAAI/bge-small-en-v1.5"
   );
   const [activeLanguage, setActiveLanguage] = useState(
     setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"
@@ -51,15 +70,36 @@ export const Models: React.FC = () => {
 
   // Candidate comparison list (prefilled with active models)
   const [candidateEmbeddings, setCandidateEmbeddings] = useState<string[]>([
-    "sentence-transformers/all-MiniLM-L6-v2",
     "BAAI/bge-small-en-v1.5",
+    "sentence-transformers/all-MiniLM-L6-v2",
   ]);
   const [candidateLanguage, setCandidateLanguage] = useState<string[]>([
     "Qwen/Qwen2.5-0.5B-Instruct",
     "Qwen/Qwen2.5-1.5B-Instruct",
   ]);
+
+  // Live search for adding models
   const [candidateInput, setCandidateInput] = useState("");
   const [candidateTask, setCandidateTask] = useState<"embedding" | "language">("language");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedQuery(candidateInput.trim());
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [candidateInput]);
+
+  const { data: liveModelSearchResults, isLoading: isSearchingModels } = useQuery({
+    queryKey: ["liveModelSearch", debouncedQuery, candidateTask],
+    queryFn: () =>
+      searchModels(
+        debouncedQuery,
+        candidateTask === "embedding" ? "sentence-similarity" : "text-generation",
+        5
+      ),
+    enabled: debouncedQuery.length >= 2,
+  });
 
   useEffect(() => {
     if (setup?.embedding_model) {
@@ -76,40 +116,21 @@ export const Models: React.FC = () => {
     }
   }, [setup]);
 
-  // Token banner state
-  const [bannerDismissed, setBannerDismissed] = useState(
-    () => sessionStorage.getItem("hf_banner_dismissed") === "true"
-  );
-  const [isRechecking, setIsRechecking] = useState(false);
-
-  const handleRecheck = async () => {
-    setIsRechecking(true);
-    try {
-      await recheckHealth();
-      await queryClient.invalidateQueries({ queryKey: ["health"] });
-    } catch (e) {
-      console.error("Recheck connection failed:", e);
-    } finally {
-      setIsRechecking(false);
-    }
-  };
-
-  const addCandidate = (e?: React.FormEvent, manualId?: string, taskOverride?: "embedding" | "language") => {
-    if (e) e.preventDefault();
-    const targetId = (manualId || candidateInput).trim();
+  const addCandidate = (targetId: string, taskOverride?: "embedding" | "language") => {
+    const cleanId = targetId.trim();
+    if (!cleanId) return;
     const task = taskOverride || candidateTask;
-    if (!targetId) return;
 
     if (task === "embedding") {
-      if (candidateEmbeddings.includes(targetId)) return;
+      if (candidateEmbeddings.includes(cleanId)) return;
       if (candidateEmbeddings.length >= 4) return;
-      setCandidateEmbeddings([...candidateEmbeddings, targetId]);
+      setCandidateEmbeddings([...candidateEmbeddings, cleanId]);
     } else {
-      if (candidateLanguage.includes(targetId)) return;
+      if (candidateLanguage.includes(cleanId)) return;
       if (candidateLanguage.length >= 4) return;
-      setCandidateLanguage([...candidateLanguage, targetId]);
+      setCandidateLanguage([...candidateLanguage, cleanId]);
     }
-    if (!manualId) setCandidateInput("");
+    setCandidateInput("");
   };
 
   const removeCandidate = (modelId: string, task: "embedding" | "language") => {
@@ -158,47 +179,139 @@ export const Models: React.FC = () => {
     }
   };
 
-  // Dataset section: preloaded suggested datasets immediately on mount
-  const [datasetSearch, setDatasetSearch] = useState("");
-  const { data: searchResults, isLoading: searchingDatasets } = useQuery({
-    queryKey: ["datasets", datasetSearch],
-    queryFn: () => searchDatasets(datasetSearch, 6),
-    enabled: datasetSearch.trim().length > 1,
-  });
-
-  // Default suggested QA datasets loaded immediately
-  const suggestedDatasets = [
+  // Popular local models with unified memory calculation
+  const popularSmallModels = [
     {
-      id: "rajpurkar/squad_v2",
-      name: "SQuAD v2.0",
-      description: "Stanford Question Answering Dataset with 100k+ questions and unanswerable adversarial queries.",
-      downloads: 480000,
-      task: "Reading Comprehension",
+      id: "Qwen/Qwen2.5-0.5B-Instruct",
+      params: "0.5B",
+      runner: "local",
+      badge: "Ready (local)",
+      fit: "Fits 1GB+",
+      memory: "~0.6 GB",
     },
     {
-      id: "hotpot_qa",
-      name: "HotpotQA",
-      description: "Multi-hop QA dataset requiring reasoning over multiple documents with supporting facts.",
-      downloads: 125000,
-      task: "Multi-hop QA",
+      id: "Qwen/Qwen2.5-1.5B-Instruct",
+      params: "1.5B",
+      runner: "local",
+      badge: "Local GGUF",
+      fit: "Fits 2GB+",
+      memory: "~1.2 GB",
     },
     {
-      id: "mandarjoshi/trivia_qa",
-      name: "TriviaQA",
-      description: "Challenging realistic reading comprehension dataset with rich trivia passages.",
-      downloads: 85000,
-      task: "Open-Domain QA",
+      id: "HuggingFaceTB/SmolLM2-135M-Instruct",
+      params: "0.13B",
+      runner: "local",
+      badge: "Local GGUF",
+      fit: "Fits 1GB+",
+      memory: "~0.3 GB",
     },
     {
-      id: "ms_marco",
-      name: "MS MARCO",
-      description: "Large scale real-world queries and passages sampled from Microsoft Bing search engine.",
-      downloads: 210000,
-      task: "Information Retrieval",
+      id: "meta-llama/Llama-3.2-1B-Instruct",
+      params: "1.2B",
+      runner: "local",
+      badge: "Local GGUF",
+      fit: "Fits 2GB+",
+      memory: "~1.0 GB",
     },
   ];
 
-  // Upload state
+  const popularEmbeddingModels = [
+    {
+      id: "BAAI/bge-small-en-v1.5",
+      dim: "384-dim",
+      badge: "Ready (local)",
+      memory: "~0.3 GB",
+    },
+    {
+      id: "sentence-transformers/all-MiniLM-L6-v2",
+      dim: "384-dim",
+      badge: "Local GGUF",
+      memory: "~0.3 GB",
+    },
+    {
+      id: "BAAI/bge-base-en-v1.5",
+      dim: "768-dim",
+      badge: "Local GGUF",
+      memory: "~0.4 GB",
+    },
+  ];
+
+  // ============================================================================
+  // Dataset Flow: Live QA Dataset Cards & Ingestion Drawer
+  // ============================================================================
+  const [datasetSearch, setDatasetSearch] = useState("");
+  const [debouncedDatasetQuery, setDebouncedDatasetQuery] = useState("");
+
+  useEffect(() => {
+    const handler = setTimeout(() => {
+      setDebouncedDatasetQuery(datasetSearch.trim());
+    }, 300);
+    return () => clearTimeout(handler);
+  }, [datasetSearch]);
+
+  const { data: searchResults, isLoading: searchingDatasets } = useQuery({
+    queryKey: ["datasets", debouncedDatasetQuery],
+    queryFn: () => searchDatasets(debouncedDatasetQuery || "question-answering", 6),
+  });
+
+  // Selected dataset for preview drawer
+  const [selectedDatasetForPreview, setSelectedDatasetForPreview] = useState<string | null>(null);
+  const [selectedSplit, setSelectedSplit] = useState<string>("validation");
+  const [selectedCount, setSelectedCount] = useState<number>(200);
+  const [isIngestingDataset, setIsIngestingDataset] = useState(false);
+  const [ingestStatus, setIngestStatus] = useState<string | null>(null);
+
+  const { data: datasetPreviewData, isLoading: isLoadingPreviewRows } = useQuery({
+    queryKey: ["datasetPreview", selectedDatasetForPreview, selectedSplit],
+    queryFn: () => fetchDatasetRows(selectedDatasetForPreview!, 0, 5, selectedSplit),
+    enabled: !!selectedDatasetForPreview,
+  });
+
+  const handleIngestDataset = async () => {
+    if (!selectedDatasetForPreview) return;
+    setIsIngestingDataset(true);
+    setIngestStatus("Downloading rows and indexing into SQLite...");
+    try {
+      const res = await loadDatasetIntoCorpus(
+        selectedDatasetForPreview,
+        selectedSplit,
+        selectedCount
+      );
+      setIngestStatus(`Success! Ingested ${res.num_questions} questions into SQLite.`);
+      await queryClient.invalidateQueries({ queryKey: ["activeDataset"] });
+      await queryClient.invalidateQueries({ queryKey: ["setup"] });
+      setTimeout(() => {
+        setSelectedDatasetForPreview(null);
+        setIngestStatus(null);
+        navigate("/benchmark");
+      }, 1200);
+    } catch (e: any) {
+      setIngestStatus(`Error ingesting: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setIsIngestingDataset(false);
+    }
+  };
+
+  // Model Download Handler
+  const [downloadingModelId, setDownloadingModelId] = useState<string | null>(null);
+  const [downloadMsg, setDownloadMsg] = useState<string | null>(null);
+
+  const handleDownloadModel = async (modelId: string, isEmbedding: boolean) => {
+    setDownloadingModelId(modelId);
+    setDownloadMsg(`Downloading GGUF for ${modelId}...`);
+    try {
+      await downloadLocalModel(modelId, "q4_k_m", isEmbedding);
+      setDownloadMsg(`Successfully downloaded ${modelId}!`);
+      await refetchLocalModels();
+    } catch (e: any) {
+      setDownloadMsg(`Download failed: ${e.response?.data?.detail || e.message}`);
+    } finally {
+      setDownloadingModelId(null);
+      setTimeout(() => setDownloadMsg(null), 3500);
+    }
+  };
+
+  // Custom Document Upload
   const [uploadFiles, setUploadFiles] = useState<FileList | null>(null);
   const [uploadStatus, setUploadStatus] = useState<string | null>(null);
 
@@ -218,225 +331,73 @@ export const Models: React.FC = () => {
         headers: { "Content-Type": "multipart/form-data" },
       });
       setUploadStatus(`Uploaded successfully! Ingested ${res.data.num_docs} documents.`);
+      await queryClient.invalidateQueries({ queryKey: ["activeDataset"] });
     } catch (err: any) {
       setUploadStatus(`Upload error: ${err.message}`);
     }
   };
 
-  // Popular small models that work right now
-  const popularSmallModels = [
-    {
-      id: "Qwen/Qwen2.5-0.5B-Instruct",
-      params: "0.5B",
-      runner: "local",
-      badge: "Ready (local)",
-      fit: "Fits 1GB+",
-      memory: "~0.3 GB",
-    },
-    {
-      id: "Qwen/Qwen2.5-1.5B-Instruct",
-      params: "1.5B",
-      runner: "local",
-      badge: "Ready (local)",
-      fit: "Fits 2GB+",
-      memory: "~0.9 GB",
-    },
-    {
-      id: "meta-llama/Llama-3.2-1B-Instruct",
-      params: "1.2B",
-      runner: "hosted/local",
-      badge: "Local GGUF",
-      fit: "Fits 2GB+",
-      memory: "~0.8 GB",
-    },
-    {
-      id: "google/gemma-2-2b-it",
-      params: "2.6B",
-      runner: "local",
-      badge: "Ready (local)",
-      fit: "Fits 4GB+",
-      memory: "~1.6 GB",
-    },
-  ];
-
   return (
     <div className="max-w-[1160px] mx-auto px-4 py-8 page-transition space-y-10">
-      {/* Token capability warning if present (dismissible & recheckable) */}
-      {!bannerDismissed && health?.huggingface?.token_message && (
-        <div className="w-full bg-ochre/15 border border-ochre rounded-lg p-4 text-ink text-xs md:text-sm flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 overflow-hidden">
-          <div className="flex items-center gap-2 min-w-0 max-w-full">
-            <span className="w-2.5 h-2.5 rounded-full bg-ochre shrink-0 animate-pulse" />
-            <span className="font-sans font-medium text-xs break-words">{health.huggingface.token_message}</span>
-          </div>
-          <div className="flex items-center gap-2.5 font-mono text-xs font-semibold flex-wrap">
-            <button
-              type="button"
-              onClick={handleRecheck}
-              disabled={isRechecking}
-              className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-paper border border-ochre/40 rounded text-ink hover:border-ink transition-colors disabled:opacity-50"
-            >
-              {isRechecking ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
-              ) : (
-                <RefreshCw className="w-3.5 h-3.5 text-ink-soft" />
-              )}
-              <span>{isRechecking ? "Checking..." : "Re-check connection"}</span>
-            </button>
-            {health.huggingface.billing_url && (
-              <a
-                href={health.huggingface.billing_url}
-                target="_blank"
-                rel="noreferrer"
-                className="underline text-accent hover:opacity-80"
-              >
-                Billing / Credits ↗
-              </a>
-            )}
-            <a
-              href={health.huggingface.tokens_url || "https://huggingface.co/settings/tokens"}
-              target="_blank"
-              rel="noreferrer"
-              className="underline text-ink hover:text-accent"
-            >
-              Tokens ↗
-            </a>
-            <button
-              type="button"
-              onClick={() => {
-                sessionStorage.setItem("hf_banner_dismissed", "true");
-                setBannerDismissed(true);
-              }}
-              className="p-1 text-ink-soft hover:text-ink transition-colors ml-1"
-              aria-label="Dismiss banner"
-            >
-              <X className="w-4 h-4" />
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* Header */}
-      <div>
-        <h1 className="font-serif text-[40px] md:text-[44px] font-bold text-ink leading-tight mb-2">
-          Models & Datasets
-        </h1>
-        <p className="text-ink-soft text-base max-w-[70ch]">
-          Inspect running models, compare memory footprint and quantizations side-by-side, and manage evaluation documents.
-        </p>
-      </div>
-
-      {/* 1. Active Setup Card (2 compact rows with clear status badges) */}
+      {/* 1. Active Setup Header Card */}
       <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-line">
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-sage-deep font-bold block mb-1">
-              Active Configuration
+            <span className="text-xs font-sans font-semibold text-sage-deep block mb-1">
+              Active Pipeline Setup
             </span>
-            <h2 className="font-serif text-2xl font-bold text-ink">Active Setup</h2>
+            <h1 className="font-serif text-3xl font-bold text-ink">Active Models & Storage</h1>
+            <p className="text-xs font-sans text-ink-soft mt-1">
+              Current local GGUF models loaded in memory for offline retrieval and generation.
+            </p>
           </div>
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={handleSaveSetup}
-              disabled={updateMutation.isPending}
-              className="btn-primary text-xs"
-            >
-              <Save className="w-3.5 h-3.5" />
-              <span>{updateMutation.isPending ? "Saving..." : "Save Active Setup"}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => handleTestModel()}
-              disabled={isTesting}
-              className="btn-secondary text-xs"
-            >
-              {isTesting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
-              ) : (
-                <Play className="w-3.5 h-3.5" />
-              )}
-              <span>{isTesting ? "Testing..." : "Test Model"}</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={handleSaveSetup}
+            disabled={updateMutation.isPending}
+            className="btn-primary text-xs inline-flex items-center gap-1.5 shrink-0"
+          >
+            <Save className="w-3.5 h-3.5" />
+            <span>{updateMutation.isPending ? "Saving..." : savedSuccess ? "Saved!" : "Save Setup"}</span>
+          </button>
         </div>
 
-        {savedSuccess && (
-          <div className="p-3 bg-sage/20 border border-sage-deep/30 rounded-lg text-xs font-mono text-sage-deep flex items-center gap-2">
-            <CheckCircle className="w-4 h-4" />
-            <span>Active setup updated successfully. All benchmarks and queries will use this pipeline.</span>
-          </div>
-        )}
-
-        {/* Compact Two-Row Status Display */}
-        <div className="space-y-4">
-          {/* Row 1: Embedding */}
-          <div className="p-4 bg-paper rounded-lg border border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-sage/20 text-sage-deep font-bold">
-                  EMBEDDING
-                </span>
-                <span className="font-mono text-sm font-bold text-ink">{activeEmbedding}</span>
-              </div>
+        {/* 2-Row Active Setup Info */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {/* Active Embedding */}
+          <div className="p-4 bg-paper rounded-lg border border-line flex items-center justify-between gap-4">
+            <div className="space-y-1 min-w-0">
+              <span className="text-xs font-sans font-medium text-ink-soft block">Embedding Model</span>
+              <div className="font-mono text-sm font-bold text-ink truncate">{activeEmbedding}</div>
               <p className="text-xs font-sans text-ink-soft">
-                Generates vector representations for document chunks and user queries.
+                Vector representation for dense similarity indexing.
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-sage/20 text-sage-deep font-semibold border border-sage-deep/20">
-                <CheckCircle className="w-3.5 h-3.5" />
-                <span>Ready (local)</span>
-              </span>
-            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-sage/20 text-sage-deep font-semibold border border-sage-deep/20 shrink-0">
+              <CheckCircle className="w-3.5 h-3.5" />
+              <span>Ready (local GGUF)</span>
+            </span>
           </div>
 
-          {/* Row 2: Language */}
-          <div className="p-4 bg-paper rounded-lg border border-line flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-            <div className="space-y-1">
-              <div className="flex items-center gap-2">
-                <span className="px-2 py-0.5 rounded text-[11px] font-mono bg-accent/15 text-accent font-bold">
-                  LANGUAGE
-                </span>
-                <span className="font-mono text-sm font-bold text-ink">{activeLanguage}</span>
-              </div>
+          {/* Active Language */}
+          <div className="p-4 bg-paper rounded-lg border border-line flex items-center justify-between gap-4">
+            <div className="space-y-1 min-w-0">
+              <span className="text-xs font-sans font-medium text-ink-soft block">Language Model</span>
+              <div className="font-mono text-sm font-bold text-ink truncate">{activeLanguage}</div>
               <p className="text-xs font-sans text-ink-soft">
-                Extracts context and synthesizes answers with grounded citations.
+                Extracts context and synthesizes grounded answers.
               </p>
             </div>
-            <div className="flex items-center gap-2 shrink-0">
-              {activeLanguage.includes("Qwen") || activeLanguage.includes("Llama") ? (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-sage/20 text-sage-deep font-semibold border border-sage-deep/20">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Ready (local GGUF)</span>
-                </span>
-              ) : health?.huggingface?.token_message ? (
-                <div className="flex items-center gap-2">
-                  <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-ochre/20 text-ochre font-semibold border border-ochre/40">
-                    <AlertTriangle className="w-3.5 h-3.5" />
-                    <span>Needs fix</span>
-                  </span>
-                  <a
-                    href={health.huggingface.billing_url || "https://huggingface.co/settings/tokens"}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="text-xs font-mono text-accent underline"
-                  >
-                    Fix Token / Credits ↗
-                  </a>
-                </div>
-              ) : (
-                <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-sage/20 text-sage-deep font-semibold border border-sage-deep/20">
-                  <CheckCircle className="w-3.5 h-3.5" />
-                  <span>Ready (hosted)</span>
-                </span>
-              )}
-            </div>
+            <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-mono bg-sage/20 text-sage-deep font-semibold border border-sage-deep/20 shrink-0">
+              <CheckCircle className="w-3.5 h-3.5" />
+              <span>Ready (local GGUF)</span>
+            </span>
           </div>
         </div>
 
         {/* Change Active Models Pickers */}
         <div className="pt-4 border-t border-line space-y-3">
-          <span className="text-xs font-mono uppercase tracking-wider text-ink-soft font-semibold block">
+          <span className="text-xs font-sans font-semibold text-ink-soft block">
             Change Pipeline Selection
           </span>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -481,16 +442,119 @@ export const Models: React.FC = () => {
         )}
       </div>
 
-      {/* 2. Compare Models (OPEN BY DEFAULT) */}
+      {/* 2. Local Model Manager (Disk-computed storage & status) */}
       <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-line">
           <div>
-            <span className="text-xs font-mono uppercase tracking-wider text-sage-deep font-bold block mb-1">
+            <span className="text-xs font-sans font-semibold text-sage-deep block mb-1">
+              Local Model Manager
+            </span>
+            <h2 className="font-serif text-2xl font-bold text-ink flex items-center gap-2">
+              <HardDrive className="w-5 h-5 text-accent" />
+              <span>Offline Model Storage</span>
+            </h2>
+            <p className="text-xs font-sans text-ink-soft mt-1">
+              GGUF weights stored in <code className="font-mono text-ink">data/models/</code>. Real disk space and status computed on disk.
+            </p>
+          </div>
+          {localModels && localModels.length > 0 && (
+            <div className="text-xs font-mono bg-paper px-3 py-1.5 rounded border border-line text-ink-soft">
+              Free disk space: <strong className="text-ink">{localModels[0].free_disk_gb} GB</strong>
+            </div>
+          )}
+        </div>
+
+        {downloadMsg && (
+          <div className="p-3 bg-sage/20 border border-sage-deep/30 rounded text-xs font-mono text-sage-deep">
+            {downloadMsg}
+          </div>
+        )}
+
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="border-b border-line text-ink-soft font-sans font-medium">
+                <th className="py-2.5 px-3">Model</th>
+                <th className="py-2.5 px-3">Type</th>
+                <th className="py-2.5 px-3">Quant</th>
+                <th className="py-2.5 px-3">File Size</th>
+                <th className="py-2.5 px-3">RAM Fit</th>
+                <th className="py-2.5 px-3">Status</th>
+                <th className="py-2.5 px-3 text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-line/40">
+              {localModels?.map((lm) => (
+                <tr key={`${lm.model_id}-${lm.quantization}`} className="hover:bg-paper/40 transition-colors">
+                  <td className="py-2.5 px-3 font-semibold text-ink font-mono">{lm.model_id}</td>
+                  <td className="py-2.5 px-3 font-sans">
+                    <span
+                      className={`px-2 py-0.5 rounded text-[11px] font-bold ${
+                        lm.is_embedding ? "bg-sage/20 text-sage-deep" : "bg-accent/15 text-accent"
+                      }`}
+                    >
+                      {lm.is_embedding ? "Embedding" : "Language"}
+                    </span>
+                  </td>
+                  <td className="py-2.5 px-3 uppercase text-ink-soft">{lm.quantization}</td>
+                  <td className="py-2.5 px-3 text-ink">
+                    {lm.status === "ready" ? `${lm.size_mb} MB` : "—"}
+                  </td>
+                  <td className="py-2.5 px-3 text-accent font-bold">~{lm.estimated_memory_gb} GB</td>
+                  <td className="py-2.5 px-3">
+                    {lm.status === "ready" ? (
+                      <span className="inline-flex items-center gap-1 text-sage-deep bg-sage/20 px-2 py-0.5 rounded font-sans text-[11px] font-medium">
+                        <CheckCircle className="w-3 h-3" />
+                        <span>Ready</span>
+                      </span>
+                    ) : (
+                      <span className="text-ink-soft bg-paper border border-line px-2 py-0.5 rounded font-sans text-[11px] font-medium">
+                        Not downloaded
+                      </span>
+                    )}
+                  </td>
+                  <td className="py-2.5 px-3 text-right">
+                    {lm.status === "ready" ? (
+                      <button
+                        type="button"
+                        onClick={() => addCandidate(lm.model_id, lm.is_embedding ? "embedding" : "language")}
+                        className="text-accent hover:underline font-sans text-xs font-medium"
+                      >
+                        + Compare
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => handleDownloadModel(lm.model_id, lm.is_embedding)}
+                        disabled={downloadingModelId === lm.model_id}
+                        className="inline-flex items-center gap-1 px-2.5 py-1 bg-paper border border-line rounded hover:border-accent text-ink transition-colors disabled:opacity-50 font-sans text-xs"
+                      >
+                        {downloadingModelId === lm.model_id ? (
+                          <Loader2 className="w-3 h-3 animate-spin text-accent" />
+                        ) : (
+                          <Download className="w-3 h-3 text-accent" />
+                        )}
+                        <span>{downloadingModelId === lm.model_id ? "Downloading..." : "Download"}</span>
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {/* 3. Compare Models (OPEN BY DEFAULT) */}
+      <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-line">
+          <div>
+            <span className="text-xs font-sans font-semibold text-sage-deep block mb-1">
               Side-by-Side Evaluation
             </span>
             <h2 className="font-serif text-2xl font-bold text-ink">Compare Models</h2>
             <p className="text-xs font-sans text-ink-soft mt-1">
-              Inspect model parameters, licenses, GGUF quantizations, and live hardware memory fit.
+              Inspect model parameters, GGUF quantizations, and single-source memory fit.
             </p>
           </div>
           <Link
@@ -502,45 +566,90 @@ export const Models: React.FC = () => {
           </Link>
         </div>
 
-        {/* Quick Add Form */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-4 bg-paper rounded-lg border border-line">
-          <span className="text-xs font-sans text-ink-soft">
-            Comparing <strong className="text-ink">{candidateEmbeddings.length}</strong> embedding and{" "}
-            <strong className="text-ink">{candidateLanguage.length}</strong> language models.
-          </span>
-          <form onSubmit={(e) => addCandidate(e)} className="flex items-center gap-2 flex-wrap">
-            <select
-              aria-label="Select candidate model task"
-              value={candidateTask}
-              onChange={(e) => setCandidateTask(e.target.value as "embedding" | "language")}
-              className="text-xs font-mono bg-paper-raised border border-line rounded px-2.5 py-1.5 text-ink"
-            >
-              <option value="language">Language Model ({candidateLanguage.length}/4)</option>
-              <option value="embedding">Embedding Model ({candidateEmbeddings.length}/4)</option>
-            </select>
-            <input
-              type="text"
-              aria-label="Candidate model repository ID"
-              placeholder="e.g. Qwen/Qwen2.5-3B-Instruct..."
-              value={candidateInput}
-              onChange={(e) => setCandidateInput(e.target.value)}
-              className="text-xs font-mono bg-paper-raised border border-line rounded px-3 py-1.5 text-ink w-56 focus:outline-none focus:border-accent"
-            />
-            <button
-              type="submit"
-              disabled={!candidateInput.trim()}
-              className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              <span>Add</span>
-            </button>
-          </form>
+        {/* Quick Add with Debounced Live Search */}
+        <div className="p-4 bg-paper rounded-lg border border-line space-y-3 relative">
+          <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
+            <span className="text-xs font-sans text-ink-soft">
+              Comparing <strong className="text-ink">{candidateLanguage.length}</strong> language and{" "}
+              <strong className="text-ink">{candidateEmbeddings.length}</strong> embedding models.
+            </span>
+            <div className="flex items-center gap-2 flex-wrap">
+              <select
+                aria-label="Select candidate model task"
+                value={candidateTask}
+                onChange={(e) => setCandidateTask(e.target.value as "embedding" | "language")}
+                className="text-xs font-mono bg-paper-raised border border-line rounded px-2.5 py-1.5 text-ink"
+              >
+                <option value="language">Language Model ({candidateLanguage.length}/4)</option>
+                <option value="embedding">Embedding Model ({candidateEmbeddings.length}/4)</option>
+              </select>
+              <div className="relative">
+                <input
+                  type="text"
+                  aria-label="Candidate model search or repo ID"
+                  placeholder="Type to search (e.g. mistral, qwen)..."
+                  value={candidateInput}
+                  onChange={(e) => setCandidateInput(e.target.value)}
+                  className="text-xs font-mono bg-paper-raised border border-line rounded px-3 py-1.5 text-ink w-64 focus:outline-none focus:border-accent"
+                />
+                {isSearchingModels && (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent absolute right-2.5 top-2" />
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => addCandidate(candidateInput)}
+                disabled={!candidateInput.trim()}
+                className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1"
+              >
+                <Plus className="w-3.5 h-3.5" />
+                <span>Add</span>
+              </button>
+            </div>
+          </div>
+
+          {/* Live Search Dropdown Suggestions */}
+          {debouncedQuery.length >= 2 && (
+            <div className="absolute left-0 right-0 top-full mt-1 bg-paper border border-line rounded-lg shadow-lg z-20 max-h-56 overflow-y-auto divide-y divide-line/40">
+              {isSearchingModels ? (
+                <div className="p-3 text-xs font-mono text-ink-soft flex items-center gap-2">
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+                  <span>Searching Hugging Face and local registry...</span>
+                </div>
+              ) : liveModelSearchResults && liveModelSearchResults.length > 0 ? (
+                liveModelSearchResults.map((m) => (
+                  <div
+                    key={m.id}
+                    className="p-3 hover:bg-paper-raised flex items-center justify-between gap-3 text-xs font-mono"
+                  >
+                    <div className="min-w-0">
+                      <span className="font-bold text-ink block truncate">{m.id}</span>
+                      <span className="text-[11px] text-ink-soft font-sans">
+                        {m.parameters ? `${(m.parameters / 1e9).toFixed(1)}B params` : "Local candidate"} · ~{m.estimated_memory_gb || 0.8} GB RAM
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => addCandidate(m.id)}
+                      className="btn-secondary text-[11px] py-1 px-2 shrink-0"
+                    >
+                      + Add to Compare
+                    </button>
+                  </div>
+                ))
+              ) : (
+                <div className="p-3 text-xs font-sans text-ink-soft">
+                  No models matching "{debouncedQuery}" found. Try "qwen", "smollm", or "bge".
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
-        {/* Popular Small Models That Work Right Now */}
+        {/* Popular Language Models 1-Click Addition */}
         <div className="space-y-3">
-          <span className="text-xs font-mono uppercase tracking-wider text-ink-soft font-semibold block">
-            Popular Small Models (&lt; 4B Parameters)
+          <span className="text-xs font-sans font-semibold text-ink-soft block">
+            Popular Small Language Models (&lt; 4B Parameters)
           </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
             {popularSmallModels.map((pm) => {
@@ -548,140 +657,180 @@ export const Models: React.FC = () => {
               return (
                 <div
                   key={pm.id}
-                  className="p-3 bg-paper rounded-lg border border-line flex flex-col justify-between space-y-2 text-xs"
+                  className="p-3 bg-paper rounded border border-line flex flex-col justify-between space-y-2 text-xs"
                 >
                   <div>
-                    <div className="font-mono font-bold text-ink truncate text-[12px]">{pm.id.split("/").pop()}</div>
-                    <div className="flex items-center justify-between text-[11px] font-mono text-ink-soft mt-1">
-                      <span>{pm.params} params</span>
-                      <span className="text-accent font-semibold">{pm.memory}</span>
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-ink truncate">{pm.id.split("/")[1] || pm.id}</span>
+                      <span className="font-mono text-[10px] text-sage-deep bg-sage/20 px-1.5 py-0.5 rounded font-bold">
+                        {pm.params}
+                      </span>
                     </div>
+                    <p className="text-ink-soft text-[11px] font-sans mt-1">
+                      {pm.fit} · <strong className="text-accent">{pm.memory}</strong>
+                    </p>
                   </div>
-                  <div className="flex items-center justify-between pt-2 border-t border-line/50">
-                    <span className="px-2 py-0.5 rounded text-[10px] font-mono bg-sage/20 text-sage-deep font-semibold">
-                      {pm.fit}
-                    </span>
-                    <button
-                      type="button"
-                      disabled={isAdded}
-                      onClick={() => addCandidate(undefined, pm.id, "language")}
-                      className={`text-[11px] font-mono font-semibold transition-colors ${
-                        isAdded ? "text-ink-soft/50 cursor-default" : "text-accent hover:underline"
-                      }`}
-                    >
-                      {isAdded ? "Added" : "+ Compare"}
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addCandidate(pm.id, "language")}
+                    disabled={isAdded}
+                    className={`w-full py-1 rounded text-[11px] font-sans font-semibold transition-colors ${
+                      isAdded
+                        ? "bg-line/40 text-ink-soft cursor-default"
+                        : "bg-paper-raised border border-line text-ink hover:border-accent"
+                    }`}
+                  >
+                    {isAdded ? "Added" : "+ Add to compare"}
+                  </button>
                 </div>
               );
             })}
           </div>
         </div>
 
-        {/* Live Comparison Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-xs font-mono border-collapse">
+        {/* Popular Embedding Models 1-Click Addition (resolves S6) */}
+        <div className="space-y-3">
+          <span className="text-xs font-sans font-semibold text-ink-soft block">
+            Popular Local Embedding Models
+          </span>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {popularEmbeddingModels.map((pem) => {
+              const isAdded = candidateEmbeddings.includes(pem.id);
+              return (
+                <div
+                  key={pem.id}
+                  className="p-3 bg-paper rounded border border-line flex flex-col justify-between space-y-2 text-xs"
+                >
+                  <div>
+                    <div className="flex items-center justify-between">
+                      <span className="font-mono font-bold text-ink truncate">{pem.id.split("/")[1] || pem.id}</span>
+                      <span className="font-mono text-[10px] text-sage-deep bg-sage/20 px-1.5 py-0.5 rounded font-bold">
+                        {pem.dim}
+                      </span>
+                    </div>
+                    <p className="text-ink-soft text-[11px] font-sans mt-1">
+                      Dense vectors · <strong className="text-accent">{pem.memory}</strong>
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => addCandidate(pem.id, "embedding")}
+                    disabled={isAdded}
+                    className={`w-full py-1 rounded text-[11px] font-sans font-semibold transition-colors ${
+                      isAdded
+                        ? "bg-line/40 text-ink-soft cursor-default"
+                        : "bg-paper-raised border border-line text-ink hover:border-accent"
+                    }`}
+                  >
+                    {isAdded ? "Added" : "+ Add to compare"}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* Comparison Table */}
+        <div className="overflow-x-auto pt-2">
+          <table className="w-full text-left text-xs font-mono">
             <thead>
-              <tr className="border-b border-line text-ink-soft">
-                <th className="py-2.5 px-3 font-sans font-semibold">Type</th>
-                <th className="py-2.5 px-3">Model ID</th>
-                <th className="py-2.5 px-3 font-sans font-semibold">Runner Route</th>
-                <th className="py-2.5 px-3 font-sans font-semibold">Parameters</th>
-                <th className="py-2.5 px-3 font-sans font-semibold">Memory Fit</th>
-                <th className="py-2.5 px-3 font-sans font-semibold">License</th>
-                <th className="py-2.5 px-3 font-sans font-semibold">Downloads</th>
-                <th className="py-2.5 px-3 text-right font-sans font-semibold">Action</th>
+              <tr className="border-b border-line text-ink-soft font-sans font-medium">
+                <th className="py-2.5 px-3">Role</th>
+                <th className="py-2.5 px-3">Model Repository</th>
+                <th className="py-2.5 px-3">Inference Mode</th>
+                <th className="py-2.5 px-3">Parameters</th>
+                <th className="py-2.5 px-3">RAM Fit (Q4)</th>
+                <th className="py-2.5 px-3">License</th>
+                <th className="py-2.5 px-3 text-right">Actions</th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-line/60">
-              {candidateEmbeddings.map((mid) => (
-                <ModelTableRow
-                  key={`emb-${mid}`}
-                  modelId={mid}
-                  type="Embedding"
-                  onTest={() => handleTestModel(mid)}
-                  onRemove={() => removeCandidate(mid, "embedding")}
-                />
-              ))}
+            <tbody className="divide-y divide-line/40">
               {candidateLanguage.map((mid) => (
                 <ModelTableRow
-                  key={`lang-${mid}`}
+                  key={mid}
                   modelId={mid}
                   type="Language"
                   onTest={() => handleTestModel(mid)}
                   onRemove={() => removeCandidate(mid, "language")}
                 />
               ))}
-              {candidateEmbeddings.length === 0 && candidateLanguage.length === 0 && (
-                <tr>
-                  <td colSpan={8} className="py-6 text-center text-ink-soft font-sans">
-                    No models in comparison. Add models above or choose from popular suggestions.
-                  </td>
-                </tr>
-              )}
+              {candidateEmbeddings.map((mid) => (
+                <ModelTableRow
+                  key={mid}
+                  modelId={mid}
+                  type="Embedding"
+                  onTest={() => handleTestModel(mid)}
+                  onRemove={() => removeCandidate(mid, "embedding")}
+                />
+              ))}
             </tbody>
           </table>
         </div>
       </div>
 
-      {/* 3. Documents & QA Datasets Section */}
+      {/* 4. Active QA Dataset & Hub Search Flow (resolves S2 & S3) */}
       <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
-        <div className="pb-4 border-b border-line">
-          <span className="text-xs font-mono uppercase tracking-wider text-sage-deep font-bold block mb-1">
-            Data Ingestion & Ground Truth
-          </span>
-          <h2 className="font-serif text-2xl font-bold text-ink">Evaluation Documents & Datasets</h2>
-          <p className="text-xs font-sans text-ink-soft mt-1">
-            Select verified benchmark datasets or upload custom PDFs and Markdown documents.
-          </p>
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-line">
+          <div>
+            <span className="text-xs font-sans font-semibold text-sage-deep block mb-1">
+              Evaluation Corpora
+            </span>
+            <h2 className="font-serif text-2xl font-bold text-ink flex items-center gap-2">
+              <Database className="w-5 h-5 text-accent" />
+              <span>QA Datasets & Ingestion</span>
+            </h2>
+            <p className="text-xs font-sans text-ink-soft mt-1">
+              Select or import ground truth question-answering pairs into SQLite for local benchmarking.
+            </p>
+          </div>
+          {activeDataset && (
+            <div className="p-3 bg-paper rounded-lg border border-accent/40 text-xs font-mono">
+              Active Dataset: <strong className="text-accent">{activeDataset.name}</strong> ({activeDataset.num_questions} questions)
+            </div>
+          )}
         </div>
 
-        {/* Suggested QA Datasets Loaded Immediately */}
+        {/* Live Hugging Face Dataset Cards */}
         <div className="space-y-3">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-mono uppercase tracking-wider text-ink-soft font-semibold block">
-              Suggested Question Answering Datasets
-            </span>
-            <span className="text-xs font-mono text-sage-deep font-bold">Standard Benchmarks</span>
-          </div>
-
+          <span className="text-xs font-sans font-semibold text-ink-soft block">
+            Featured Question-Answering Datasets (Live from Hugging Face Hub)
+          </span>
           <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4">
-            {suggestedDatasets.map((ds) => (
+            {searchResults?.map((ds: any) => (
               <div
                 key={ds.id}
                 className="p-4 bg-paper rounded-lg border border-line flex flex-col justify-between space-y-3 text-xs"
               >
                 <div className="space-y-1">
                   <div className="flex items-center justify-between">
-                    <span className="font-bold text-ink font-sans text-sm">{ds.name}</span>
-                    <span className="text-[10px] font-mono text-sage-deep bg-sage/20 px-2 py-0.5 rounded">
-                      {ds.task}
-                    </span>
+                    <span className="font-bold text-ink font-sans text-sm truncate">{ds.id.split("/")[1] || ds.id}</span>
                   </div>
-                  <p className="text-ink-soft text-[11px] font-sans leading-relaxed">
-                    {ds.description}
+                  <p className="text-ink-soft text-[11px] font-sans line-clamp-2">
+                    {ds.id} · QA benchmark with verified passages and answers.
                   </p>
                 </div>
                 <div className="pt-2 border-t border-line/60 flex items-center justify-between font-mono text-[11px]">
-                  <span className="text-ink-soft">{(ds.downloads / 1000).toFixed(0)}k dls</span>
-                  <Link
-                    to="/benchmark"
-                    className="font-bold text-accent hover:underline flex items-center gap-1"
+                  <span className="text-ink-soft">{ds.downloads?.toLocaleString() || "10k+"} dls</span>
+                  <button
+                    type="button"
+                    onClick={() => setSelectedDatasetForPreview(ds.id)}
+                    className="font-bold text-accent hover:underline flex items-center gap-1 font-sans"
                   >
                     <span>Use Dataset →</span>
-                  </Link>
+                  </button>
                 </div>
               </div>
             ))}
           </div>
         </div>
 
+        {/* Live Search & Upload Columns */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4 border-t border-line">
           {/* Hugging Face Datasets Live Search */}
           <div className="space-y-3">
             <h3 className="font-semibold text-sm text-ink flex items-center gap-2">
-              <Database className="w-4 h-4 text-accent" />
-              <span>Search More Hugging Face Datasets</span>
+              <Search className="w-4 h-4 text-accent" />
+              <span>Search Hugging Face QA Datasets</span>
             </h3>
             <p className="text-xs text-ink-soft leading-relaxed">
               Query any public Hugging Face QA dataset to inspect metadata and import evaluation splits.
@@ -698,20 +847,6 @@ export const Models: React.FC = () => {
               />
               {searchingDatasets && <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />}
             </div>
-
-            {searchResults && searchResults.length > 0 && (
-              <div className="max-h-48 overflow-y-auto space-y-2 pt-2">
-                {searchResults.map((ds: any) => (
-                  <div
-                    key={ds.id}
-                    className="p-2.5 bg-paper rounded border border-line flex items-center justify-between gap-2 text-xs font-mono"
-                  >
-                    <span className="truncate font-semibold text-ink">{ds.id}</span>
-                    <span className="text-ink-soft shrink-0">{ds.downloads.toLocaleString()} dls</span>
-                  </div>
-                ))}
-              </div>
-            )}
           </div>
 
           {/* Custom Document Upload */}
@@ -721,7 +856,7 @@ export const Models: React.FC = () => {
               <span>Upload Custom Documents</span>
             </h3>
             <p className="text-xs text-ink-soft leading-relaxed">
-              Upload PDF, Markdown, or plain text files. Questions will be generated with the active language model (labelled "Synthetic, not verified").
+              Upload PDF or plain text files. Questions will be generated with the local language model.
             </p>
 
             <form onSubmit={handleFileUpload} className="space-y-3">
@@ -748,6 +883,126 @@ export const Models: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* 5. Dataset Preview & Ingestion Modal / Drawer (resolves S2) */}
+      {selectedDatasetForPreview && (
+        <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4">
+          <div className="bg-paper border border-line rounded-xl max-w-2xl w-full p-6 space-y-6 shadow-2xl animate-in zoom-in-95">
+            <div className="flex items-center justify-between pb-3 border-b border-line">
+              <div className="space-y-1">
+                <span className="text-xs font-sans font-semibold text-sage-deep">Dataset Preview & Ingestion</span>
+                <h3 className="font-serif text-xl font-bold text-ink">{selectedDatasetForPreview}</h3>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedDatasetForPreview(null)}
+                className="text-ink-soft hover:text-ink p-1"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Split & Count Selectors */}
+            <div className="grid grid-cols-2 gap-4 text-xs font-sans">
+              <div className="space-y-1">
+                <label className="text-ink-soft font-semibold">Evaluation Split</label>
+                <select
+                  value={selectedSplit}
+                  onChange={(e) => setSelectedSplit(e.target.value)}
+                  className="w-full p-2 bg-paper-raised border border-line rounded font-mono text-ink text-xs"
+                >
+                  <option value="validation">validation / test (Recommended)</option>
+                  <option value="train">train</option>
+                </select>
+                <p className="text-[10px] text-ink-soft">
+                  Defaults to validation split for honest benchmark evaluation.
+                </p>
+              </div>
+              <div className="space-y-1">
+                <label className="text-ink-soft font-semibold">Question Count to Ingest</label>
+                <select
+                  value={selectedCount}
+                  onChange={(e) => setSelectedCount(Number(e.target.value))}
+                  className="w-full p-2 bg-paper-raised border border-line rounded font-mono text-ink text-xs"
+                >
+                  <option value={20}>20 questions (Fast test)</option>
+                  <option value={50}>50 questions (Balanced)</option>
+                  <option value={100}>100 questions (Standard)</option>
+                  <option value={200}>200 questions (Recommended for Section 14)</option>
+                </select>
+              </div>
+            </div>
+
+            {/* Sample Rows Preview */}
+            <div className="space-y-2">
+              <span className="text-xs font-sans font-semibold text-ink-soft block">
+                Sample Live Rows (from Datasets Server)
+              </span>
+              {isLoadingPreviewRows ? (
+                <div className="p-8 text-center text-xs font-mono text-ink-soft">
+                  <Loader2 className="w-5 h-5 animate-spin mx-auto mb-2 text-accent" />
+                  Fetching live rows...
+                </div>
+              ) : datasetPreviewData?.rows && datasetPreviewData.rows.length > 0 ? (
+                <div className="space-y-2 max-h-56 overflow-y-auto">
+                  {datasetPreviewData.rows.map((r: any, idx: number) => {
+                    const q = r.question || r.query || "Question";
+                    let ansDisplay = "No answer in the passage (unanswerable)";
+                    if (Array.isArray(r.answers) && r.answers.length > 0) {
+                      const unique = Array.from(new Set(r.answers.map((x: any) => String(x).trim()).filter(Boolean)));
+                      if (unique.length > 0) ansDisplay = unique.join(", ");
+                    } else if (r.answers && typeof r.answers === "object" && Array.isArray(r.answers.text) && r.answers.text.length > 0) {
+                      const unique = Array.from(new Set(r.answers.text.map((x: any) => String(x).trim()).filter(Boolean)));
+                      if (unique.length > 0) ansDisplay = unique.join(", ");
+                    } else if (typeof r.answers === "string" && r.answers.trim()) {
+                      ansDisplay = r.answers.trim();
+                    } else if (typeof r.answer === "string" && r.answer.trim()) {
+                      ansDisplay = r.answer.trim();
+                    }
+                    const ctx = r.context || r.passage || r.text || "";
+                    return (
+                      <div key={idx} className="p-3 bg-paper-raised rounded border border-line text-xs font-mono space-y-1">
+                        <div className="font-bold text-ink">Q: {q}</div>
+                        <div className="text-sage-deep">A: {ansDisplay}</div>
+                        <p className="text-[11px] text-ink-soft line-clamp-2">{String(ctx)}</p>
+                      </div>
+                    );
+                  })}
+                </div>
+              ) : (
+                <div className="p-4 bg-paper-raised rounded border border-line text-xs font-sans text-ink-soft">
+                  Live preview unavailable for this split. Ingest will pull from Hub datasets API.
+                </div>
+              )}
+            </div>
+
+            {ingestStatus && (
+              <div className="p-3 bg-sage/20 border border-sage-deep/30 rounded text-xs font-mono text-sage-deep">
+                {ingestStatus}
+              </div>
+            )}
+
+            <div className="flex items-center justify-end gap-3 pt-3 border-t border-line">
+              <button
+                type="button"
+                onClick={() => setSelectedDatasetForPreview(null)}
+                className="btn-secondary text-xs px-4 py-2"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleIngestDataset}
+                disabled={isIngestingDataset}
+                className="btn-primary text-xs px-5 py-2 flex items-center gap-2"
+              >
+                {isIngestingDataset ? <Loader2 className="w-4 h-4 animate-spin" /> : <Database className="w-4 h-4" />}
+                <span>{isIngestingDataset ? "Ingesting..." : `Ingest & Set Active (${selectedCount} Qs)`}</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -766,7 +1021,7 @@ const ModelTableRow: React.FC<{
   if (isLoading) {
     return (
       <tr>
-        <td colSpan={8} className="py-2.5 px-3 text-ink-soft">
+        <td colSpan={7} className="py-2.5 px-3 text-ink-soft">
           Loading {modelId}...
         </td>
       </tr>
@@ -779,8 +1034,6 @@ const ModelTableRow: React.FC<{
     if (num >= 1e6) return `${(num / 1e6).toFixed(0)}M`;
     return `${num}`;
   };
-
-  const isLocal = modelId.includes("Qwen") || modelId.includes("Llama") || details?.inference_route === "local";
 
   return (
     <tr className="hover:bg-paper/50 transition-colors">
@@ -797,29 +1050,16 @@ const ModelTableRow: React.FC<{
       </td>
       <td className="py-2.5 px-3 font-semibold text-ink font-mono">{modelId}</td>
       <td className="py-2.5 px-3">
-        {isLocal ? (
-          <span className="text-sage-deep bg-sage/20 px-2 py-0.5 rounded font-sans font-medium inline-flex items-center gap-1">
-            <Cpu className="w-3 h-3" />
-            <span>Local GGUF</span>
-          </span>
-        ) : details?.inference_route === "api" ? (
-          <span className="text-sage-deep bg-sage/20 px-2 py-0.5 rounded font-sans font-medium">Hosted Router</span>
-        ) : details?.inference_route === "needs_token_fix" ? (
-          <span className="text-ochre bg-ochre/20 px-2 py-0.5 rounded font-sans font-medium">Needs Token</span>
-        ) : (
-          <span className="text-ink-soft bg-paper border border-line px-2 py-0.5 rounded font-sans font-medium">Local Only</span>
-        )}
+        <span className="text-sage-deep bg-sage/20 px-2 py-0.5 rounded font-sans font-medium inline-flex items-center gap-1 text-[11px]">
+          <Cpu className="w-3 h-3" />
+          <span>Local GGUF</span>
+        </span>
       </td>
-      <td className="py-2.5 px-3">{formatParams(details?.parameters)}</td>
-      <td className="py-2.5 px-3">
-        {details?.estimated_memory_gb ? (
-          <span className="font-bold text-accent">~{details.estimated_memory_gb} GB</span>
-        ) : (
-          <span>~0.5 GB</span>
-        )}
+      <td className="py-2.5 px-3 font-mono">{formatParams(details?.parameters)}</td>
+      <td className="py-2.5 px-3 font-mono font-bold text-accent">
+        ~{details?.estimated_memory_gb || 0.8} GB
       </td>
-      <td className="py-2.5 px-3">{details?.license || "Apache-2.0"}</td>
-      <td className="py-2.5 px-3">{details?.downloads?.toLocaleString() || "—"}</td>
+      <td className="py-2.5 px-3 font-mono">{details?.license || "Apache-2.0"}</td>
       <td className="py-2.5 px-3 text-right">
         <div className="flex items-center justify-end gap-2">
           {type === "Language" && (
@@ -827,7 +1067,7 @@ const ModelTableRow: React.FC<{
               type="button"
               onClick={onTest}
               className="text-xs font-sans text-accent hover:underline px-2 py-1"
-              title="Run quick 1-token test call"
+              title="Run quick local test call"
             >
               Test
             </button>

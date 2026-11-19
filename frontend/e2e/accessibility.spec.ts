@@ -12,7 +12,8 @@ test.describe("Axe Accessibility Audits", () => {
 
   for (const p of PAGES) {
     test(`Axe scan on ${p}`, async ({ page }) => {
-      await page.goto(p, { waitUntil: "networkidle" });
+      await page.goto(p);
+      await page.waitForLoadState("domcontentloaded");
       const accessibilityScanResults = await new AxeBuilder({ page })
         .withTags(["wcag2a", "wcag2aa", "wcag21a", "wcag21aa"])
         .analyze();

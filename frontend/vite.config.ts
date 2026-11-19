@@ -10,15 +10,16 @@ export default defineConfig({
   ],
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   server: {
+    host: '::',
     port: 5173,
     proxy: {
-      '/api': 'http://localhost:8000',
-      '/healthz': 'http://localhost:8000',
-      '/readyz': 'http://localhost:8000',
+      '/api': 'http://127.0.0.1:8000',
+      '/healthz': 'http://127.0.0.1:8000',
+      '/readyz': 'http://127.0.0.1:8000',
     },
   },
 })

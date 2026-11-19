@@ -9,8 +9,8 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter
 import psutil
+from fastapi import APIRouter
 
 router = APIRouter(prefix="/api/hardware", tags=["hardware"])
 logger = logging.getLogger(__name__)
@@ -100,7 +100,7 @@ async def get_hardware() -> dict[str, Any]:
     profiles = []
     if PROFILES_PATH.exists():
         try:
-            with open(PROFILES_PATH, "r", encoding="utf-8") as f:
+            with open(PROFILES_PATH, encoding="utf-8") as f:
                 profiles = json.load(f)
         except Exception as e:
             logger.error(f"Failed to read hardware profiles: {e}")

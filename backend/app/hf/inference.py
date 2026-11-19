@@ -1,34 +1,28 @@
-"""Hugging Face Inference client with InferenceClient, rate limit handling, and local runner fallback."""
+"""Free local-only inference module powered by llama-cpp-python.
+Hosted inference APIs have been completely removed.
+"""
 from __future__ import annotations
 
-import asyncio
 import time
-from typing import Any, Optional
-from huggingface_hub import InferenceClient
-from huggingface_hub.errors import HfHubHTTPError, BadRequestError
+from typing import Any
 
-from app.config import settings
-from app.hf.errors import translate_hf_error
-
-
-def _get_client() -> InferenceClient:
-    token = settings.hf_token.strip() if settings.hf_token else None
-    return InferenceClient(token=token, timeout=30.0)
+from app.runners.local import run_local_embedding, run_local_inference
 
 
 async def generate_text(
     model_id: str,
     prompt: str,
-    system_prompt: Optional[str] = None,
+    system_prompt: str | None = None,
     max_tokens: int = 64,
     temperature: float = 0.0,
-    max_retries: int = 2,
+    quantization: str = "q4_k_m",
+    max_retries: int = 1,
 ) -> dict[str, Any]:
-    """Call Hugging Face inference for text generation via InferenceClient or OpenAI router endpoint.
-    Never falls back silently to heuristic extraction.
+    """Execute local text generation via llama-cpp-python.
+    Never calls external hosted endpoints.
     """
     # Separate explicit baseline if chosen by user
-    if model_id.lower() in ["extractive-baseline", "extractive_baseline"]:
+    if model_id and model_id.lower() in ["extractive-baseline", "extractive_baseline"]:
         t0 = time.perf_counter()
         context_body = prompt
         if "Context:" in prompt and "Question:" in prompt:
@@ -54,149 +48,31 @@ async def generate_text(
             "text": best_sentence,
             "latency_ms": round(elapsed, 2),
             "tokens": len(best_sentence.split()),
+            "tokens_per_second": round(len(best_sentence.split()) / max(elapsed / 1000.0, 0.001), 1),
             "error": None,
             "source": "extractive_baseline",
         }
 
-    client = _get_client()
-    messages = []
-    if system_prompt:
-        messages.append({"role": "system", "content": system_prompt})
-    messages.append({"role": "user", "content": prompt})
-
-    delay = 1.0
-    last_err: Optional[str] = None
-
-    for attempt in range(max_retries):
-        t0 = time.perf_counter()
-        try:
-            response = client.chat_completion(
-                messages=messages,
-                model=model_id,
-                max_tokens=max_tokens,
-                temperature=temperature if temperature > 0 else None,
-            )
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-            content = ""
-            if response.choices:
-                content = response.choices[0].message.content or ""
-            tokens = len(content.split())
-            if hasattr(response, "usage") and response.usage:
-                tokens = response.usage.completion_tokens or tokens
-
-            return {
-                "text": content.strip(),
-                "latency_ms": round(elapsed_ms, 2),
-                "tokens": tokens,
-                "error": None,
-                "source": "api",
-            }
-
-        except HfHubHTTPError as e:
-            status = getattr(e.response, "status_code", None)
-            if status in [429, 503]:
-                last_err = f"Waiting for the API (rate limit / cold start HTTP {status})"
-                await asyncio.sleep(delay)
-                delay *= 2
-                continue
-            else:
-                last_err = str(e)
-                break
-        except BadRequestError as e:
-            last_err = str(e)
-            break
-        except Exception as e:
-            last_err = str(e)
-            break
-
-    # If remote API call fails, return clean translated error with empty text.
-    # No silent heuristic fallback.
-    translated_error = translate_hf_error(last_err)
-    return {
-        "text": "",
-        "latency_ms": 0.0,
-        "tokens": 0,
-        "error": translated_error,
-        "source": "api",
-    }
+    # Execute via local runner
+    return await run_local_inference(
+        model_id=model_id,
+        prompt=prompt,
+        system_prompt=system_prompt,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        quantization=quantization,
+    )
 
 
 async def compute_embeddings(
     model_id: str,
     texts: list[str],
-    max_retries: int = 2,
+    max_retries: int = 1,
 ) -> dict[str, Any]:
-    """Compute dense embeddings for a list of texts via InferenceClient or local feature extraction."""
+    """Compute dense embeddings locally via llama-cpp-python GGUF embedding model.
+    100% Free, local-only, zero external network dependency.
+    """
     if not texts:
-        return {"embeddings": [], "latency_ms": 0.0, "error": None, "source": "api"}
+        return {"embeddings": [], "latency_ms": 0.0, "error": None, "source": "local"}
 
-    client = _get_client()
-    delay = 1.0
-    last_err: Optional[str] = None
-
-    for attempt in range(max_retries):
-        t0 = time.perf_counter()
-        try:
-            res = client.feature_extraction(texts, model=model_id)
-            elapsed_ms = (time.perf_counter() - t0) * 1000
-
-            # Convert numpy/tensor to list of vectors
-            import numpy as np
-            arr = np.array(res, dtype=np.float32)
-            if arr.ndim == 3:
-                # (batch, seq, dim) -> mean pool over seq length
-                arr = arr.mean(axis=1)
-            elif arr.ndim == 1:
-                arr = arr.reshape(1, -1)
-
-            return {
-                "embeddings": arr.tolist(),
-                "latency_ms": round(elapsed_ms, 2),
-                "error": None,
-                "source": "api",
-            }
-        except HfHubHTTPError as e:
-            status = getattr(e.response, "status_code", None)
-            if status in [429, 503]:
-                last_err = f"Waiting for the API (rate limit HTTP {status})"
-                await asyncio.sleep(delay)
-                delay *= 2
-                continue
-            elif status == 402:
-                last_err = "Hugging Face API returned HTTP 402: Credits required. Add HF_TOKEN to backend/.env."
-                break
-            elif status in [401, 403]:
-                last_err = f"Hugging Face API returned HTTP {status}: Add valid HF_TOKEN to backend/.env."
-                break
-            else:
-                last_err = f"Embedding error: {str(e)[:150]}"
-                break
-        except Exception as e:
-            last_err = f"Embeddings error: {str(e)[:150]}"
-            break
-
-    # If remote API call fails and local runner is enabled, compute local TF-IDF / dense hash representation
-    if settings.local_runner:
-        t_local_0 = time.perf_counter()
-        import numpy as np
-        from sklearn.feature_extraction.text import HashingVectorizer
-
-        vectorizer = HashingVectorizer(n_features=384, alternate_sign=False, norm="l2")
-        sparse_mat = vectorizer.transform(texts)
-        dense_vecs = sparse_mat.toarray().astype(np.float32).tolist()
-        t_local_1 = time.perf_counter()
-        local_ms = (t_local_1 - t_local_0) * 1000
-
-        return {
-            "embeddings": dense_vecs,
-            "latency_ms": round(local_ms, 2),
-            "error": last_err,
-            "source": "local",
-        }
-
-    return {
-        "embeddings": [],
-        "latency_ms": 0.0,
-        "error": last_err or "Embedding computation failed",
-        "source": "api",
-    }
+    return await run_local_embedding(model_id=model_id, texts=texts)

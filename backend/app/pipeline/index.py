@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from typing import Any
+
 import numpy as np
 
 
@@ -61,8 +62,8 @@ class VectorIndex:
             json.dump(data, f)
 
     @classmethod
-    def load(cls, path: Path) -> "VectorIndex":
-        with open(path, "r", encoding="utf-8") as f:
+    def load(cls, path: Path) -> VectorIndex:
+        with open(path, encoding="utf-8") as f:
             data = json.load(f)
         idx = cls(
             corpus_id=data["corpus_id"],

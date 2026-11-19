@@ -12,30 +12,25 @@ export const api = axios.create({
 
 export interface ApiHealth {
   status: string;
-  diagnosis?: string;
-  huggingface: {
-    reachable: boolean;
-    router_accessible: boolean;
-    token_present: boolean;
-    username?: string | null;
-    token_message?: string | null;
-    fix?: string | null;
-    tokens_url?: string;
-    providers_url?: string;
-    billing_url?: string;
-    test_model?: string | null;
-  };
   local_runner: boolean;
-  hardware?: {
-    device: string;
-    profile: string;
-    gpu?: any;
-    ram_total_mb: number;
-    ram_available_mb: number;
-    max_recommended_params?: number;
-    max_recommended_quant?: string;
+  engine?: string;
+  mode?: string;
+  offline_mode?: boolean;
+  device?: string;
+  gpu?: any;
+  cpu?: any;
+  ram?: any;
+  models_ready?: number;
+  total_local_models?: number;
+  huggingface?: {
+    reachable?: boolean;
+    token_present: boolean;
+    hub_reachable?: boolean;
+    token_message?: string | null;
+    mode?: string;
+    billing_url?: string;
+    tokens_url?: string;
   };
-  database: string;
 }
 
 export interface SetupConfig {
@@ -66,8 +61,10 @@ export interface ModelSearchResult {
   gated: boolean;
   tags: string[];
   parameters: number | null;
+  estimated_memory_gb?: number;
   inference_available: boolean;
   local_only: boolean;
+  status_label?: string;
 }
 
 export interface ModelDetails {
@@ -80,10 +77,25 @@ export interface ModelDetails {
   estimated_memory_gb?: number;
   license?: string;
   inference_route?: string;
+  inference_available?: boolean;
+  status_label?: string;
+  route_reason?: string;
   available?: boolean;
   error?: string;
   access_url?: string;
   library_name?: string;
+}
+
+export interface LocalModelInfo {
+  model_id: string;
+  quantization: string;
+  filename: string;
+  repo_id: string;
+  is_embedding: boolean;
+  status: "ready" | "not_downloaded" | "downloading" | "failed";
+  size_mb: number;
+  free_disk_gb: number;
+  estimated_memory_gb: number;
 }
 
 export interface HardwareProfile {
@@ -98,79 +110,114 @@ export interface HardwareProfile {
   description: string;
 }
 
-export interface HardwareResponse {
-  detected: {
-    id: string;
-    name: string;
+export interface HardwareDetection {
+  detected?: any;
+  benchmark_hardware?: any;
+  machine: {
+    device: string;
+    profile_match: string;
     chip: string;
-    category: string;
-    total_gb: number;
-    budget_gb: number;
-    type: string;
-    system_ram_gb: number;
-    is_detected: boolean;
-  };
-  benchmark_hardware: {
-    name: string;
-    disclaimer: string;
+    chip_category: string;
+    vram_gb: number;
+    ram_gb: number;
+    is_unified: boolean;
+    auto_budget_gb: number;
   };
   profiles: HardwareProfile[];
-}
-
-export async function fetchHardware(): Promise<HardwareResponse> {
-  const res = await api.get<HardwareResponse>("/api/hardware");
-  return res.data;
+  latency_disclaimer: string;
 }
 
 export async function fetchHealth(): Promise<ApiHealth> {
-  const res = await api.get<ApiHealth>("/api/health");
+  const res = await api.get("/api/health");
   return res.data;
 }
 
 export async function recheckHealth(): Promise<ApiHealth> {
-  const res = await api.post<ApiHealth>("/api/health/recheck");
+  const res = await api.post("/api/health/recheck");
+  return res.data;
+}
+
+export async function fetchHardware(): Promise<HardwareDetection> {
+  const res = await api.get("/api/hardware");
   return res.data;
 }
 
 export async function fetchSetup(): Promise<SetupConfig> {
-  const res = await api.get<SetupConfig>("/api/setup");
+  const res = await api.get("/api/setup");
   return res.data;
 }
 
-export async function fetchSetupSuggestions(): Promise<{
-  local_instruct: Array<{ id: string; type: string; badge: string; description?: string }>;
-  embeddings: Array<{ id: string; type: string; badge: string }>;
-}> {
+export async function updateSetup(config: Partial<SetupConfig>) {
+  const res = await api.put("/api/setup", config);
+  return res.data;
+}
+
+export async function fetchSetupSuggestions() {
   const res = await api.get("/api/setup/suggestions");
   return res.data;
 }
 
-export async function updateSetup(data: Partial<SetupConfig>): Promise<SetupConfig> {
-  const res = await api.put<SetupConfig>("/api/setup", data);
-  return res.data;
-}
-
 export async function fetchStats(): Promise<WorkspaceStats> {
-  const res = await api.get<WorkspaceStats>("/api/stats");
+  const res = await api.get("/api/stats");
   return res.data;
 }
 
-export async function searchModels(q: string, task?: string): Promise<ModelSearchResult[]> {
-  const res = await api.get<ModelSearchResult[]>("/api/hf/models", {
-    params: { q, task, limit: 12 },
+export async function searchModels(q: string, task?: string, limit: number = 20): Promise<ModelSearchResult[]> {
+  const res = await api.get("/api/hf/models", { params: { q, task, limit } });
+  return res.data;
+}
+
+export async function fetchModelDetails(modelId: string): Promise<ModelDetails> {
+  const parts = modelId.split("/");
+  if (parts.length === 2) {
+    const res = await api.get(`/api/hf/models/${parts[0]}/${parts[1]}`);
+    return res.data;
+  }
+  const res = await api.get("/api/hf/models", { params: { q: modelId, limit: 1 } });
+  if (res.data && res.data.length > 0) return res.data[0];
+  return { id: modelId, available: true, estimated_memory_gb: 1.0 };
+}
+
+export async function fetchModelMemory(modelId: string, quantization: string = "q4_k_m") {
+  const res = await api.get("/api/hf/models/memory", { params: { model_id: modelId, quantization } });
+  return res.data;
+}
+
+export async function fetchLocalModels(): Promise<LocalModelInfo[]> {
+  const res = await api.get("/api/hf/models/local");
+  return res.data;
+}
+
+export async function downloadLocalModel(modelId: string, quantization: string = "q4_k_m", isEmbedding: boolean = false) {
+  const res = await api.post("/api/hf/models/download", {
+    model_id: modelId,
+    quantization,
+    is_embedding: isEmbedding,
   });
   return res.data;
 }
 
 export async function searchDatasets(q: string, limit: number = 20) {
-  const res = await api.get("/api/hf/datasets", {
-    params: { q, limit },
+  const res = await api.get("/api/hf/datasets", { params: { q, limit } });
+  return res.data;
+}
+
+export async function fetchDatasetRows(datasetId: string, offset: number = 0, length: number = 10, split?: string) {
+  const res = await api.get(`/api/hf/datasets/${datasetId}/rows`, { params: { offset, length, split } });
+  return res.data;
+}
+
+export async function loadDatasetIntoCorpus(datasetId: string, split: string = "validation", count: number = 200) {
+  const res = await api.post("/api/corpora/load-dataset", {
+    dataset_id: datasetId,
+    split,
+    count,
   });
   return res.data;
 }
 
-export async function fetchModelDetails(id: string): Promise<ModelDetails> {
-  const res = await api.get<ModelDetails>(`/api/hf/models/${id}`);
+export async function fetchActiveDataset() {
+  const res = await api.get("/api/datasets/active");
   return res.data;
 }
 
@@ -184,13 +231,8 @@ export async function fetchRuns(includeInvalid: boolean = false) {
   return res.data;
 }
 
-export async function fetchRunDetails(id: string) {
+export async function fetchRun(id: string) {
   const res = await api.get(`/api/runs/${id}`);
-  return res.data;
-}
-
-export async function startBenchmarkRun(payload: any) {
-  const res = await api.post("/api/runs", payload);
   return res.data;
 }
 
@@ -199,13 +241,18 @@ export async function previewRunCost(payload: any) {
   return res.data;
 }
 
+export async function startBenchmarkRun(payload: any) {
+  const res = await api.post("/api/runs", payload);
+  return res.data;
+}
+
 export async function cancelBenchmarkRun(id: string) {
   const res = await api.post(`/api/runs/${id}/cancel`);
   return res.data;
 }
 
-export async function fetchResults(runId?: string, includeInvalid: boolean = false) {
-  const res = await api.get("/api/results", { params: { run_id: runId, include_invalid: includeInvalid } });
+export async function fetchResults(runId?: string, includeInvalid: boolean = false, groupRepeats: boolean = true) {
+  const res = await api.get("/api/results", { params: { run_id: runId, include_invalid: includeInvalid, group_repeats: groupRepeats } });
   return res.data;
 }
 
@@ -263,10 +310,5 @@ export async function suggestQuestions(payload: {
   language_model?: string;
 }) {
   const res = await api.post("/api/questions/suggest", payload);
-  return res.data;
-}
-
-export async function fetchDatasetRows(datasetId: string) {
-  const res = await api.get(`/api/hf/datasets/${datasetId}/rows`);
   return res.data;
 }

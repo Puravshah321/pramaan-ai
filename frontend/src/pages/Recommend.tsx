@@ -104,7 +104,7 @@ export const Recommend: React.FC = () => {
       </div>
 
       {/* Hardware Profile Selector Card */}
-      <div className="card-paper p-6 md:p-8 bg-paper-raised space-y-6">
+      <div className="card-paper p-4 sm:p-6 md:p-8 bg-paper-raised space-y-6 overflow-hidden">
         <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 pb-4 border-b border-line">
           <div>
             <span className="text-xs font-mono uppercase tracking-wider text-sage-deep font-bold block mb-1">
@@ -125,15 +125,15 @@ export const Recommend: React.FC = () => {
               <button
                 type="button"
                 onClick={() => selectProfile({ id: "detected_machine", budget_gb: hwData.detected.budget_gb })}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-mono font-medium transition-all border ${
+                className={`flex items-center gap-2 px-3.5 py-2 rounded-lg text-xs font-mono font-medium transition-all border max-w-full ${
                   selectedProfileId === "detected_machine"
                     ? "bg-ink text-paper border-ink shadow-sm"
                     : "bg-paper text-ink border-line hover:border-ink/50"
                 }`}
               >
-                <Cpu className="w-3.5 h-3.5 text-accent" />
-                <span>Your Machine: {hwData.detected.name}</span>
-                {selectedProfileId === "detected_machine" && <CheckCircle2 className="w-3.5 h-3.5 text-accent ml-1" />}
+                <Cpu className="w-3.5 h-3.5 text-accent shrink-0" />
+                <span className="truncate max-w-[240px] sm:max-w-none">Your Machine: {hwData.detected.name}</span>
+                {selectedProfileId === "detected_machine" && <CheckCircle2 className="w-3.5 h-3.5 text-accent ml-1 shrink-0" />}
               </button>
             )}
 
@@ -180,7 +180,7 @@ export const Recommend: React.FC = () => {
 
         {/* Search & Category Filter for Hardware Library */}
         <div className="pt-2 border-t border-line/60 space-y-4">
-          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3 max-w-full overflow-hidden">
             {/* Search Input */}
             <div className="relative flex-1 max-w-md">
               <Search className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-ink-soft" />
@@ -194,7 +194,7 @@ export const Recommend: React.FC = () => {
             </div>
 
             {/* Category tabs */}
-            <div className="flex items-center gap-1 overflow-x-auto pb-1 sm:pb-0">
+            <div className="flex flex-wrap items-center gap-1">
               {categories.map((cat) => (
                 <button
                   key={cat}

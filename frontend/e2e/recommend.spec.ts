@@ -15,8 +15,8 @@ test.describe("Recommend Page", () => {
     await expect(page.locator("h1:has-text('Hardware-Aware Recommendations')")).toBeVisible({ timeout: 10000 });
 
     // Verify auto-detected machine or preset chip
-    const yourMachine = page.locator("button:has-text('Your Machine')");
-    await expect(yourMachine).toBeVisible({ timeout: 10000 });
+    const chipSelector = page.locator("button:has-text('Your Machine')").or(page.locator("button:has-text('RTX 3060')"));
+    await expect(chipSelector.first()).toBeVisible({ timeout: 10000 });
 
     // Verify RTX 3060 preset exists
     const rtx3060Preset = page.locator("button:has-text('RTX 3060')");

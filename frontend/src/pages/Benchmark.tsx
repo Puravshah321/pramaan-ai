@@ -8,6 +8,8 @@ import {
   startBenchmarkRun,
   cancelBenchmarkRun,
   fetchHealth,
+  fetchHardware,
+  fetchActiveDataset,
 } from "../api/client";
 import { Tip } from "../components/Tip";
 import {
@@ -18,6 +20,7 @@ import {
   Loader2,
   ArrowRight,
   ChevronDown,
+  Database,
 } from "lucide-react";
 
 export const Benchmark: React.FC = () => {
@@ -33,6 +36,11 @@ export const Benchmark: React.FC = () => {
   const { data: health } = useQuery({
     queryKey: ["health"],
     queryFn: fetchHealth,
+  });
+
+  const { data: activeDataset } = useQuery({
+    queryKey: ["activeDataset"],
+    queryFn: fetchActiveDataset,
   });
 
   const [showInvalid, setShowInvalid] = useState(false);
@@ -57,8 +65,20 @@ export const Benchmark: React.FC = () => {
   const [chunkSizes, setChunkSizes] = useState<number[]>([256]);
   const [topKs, setTopKs] = useState<number[]>([3]);
   const [quantizations, setQuantizations] = useState<string[]>(["Q4_K_M"]);
-  const [questionCount, setQuestionCount] = useState<number>(50);
-  const [memoryLimitGb, setMemoryLimitGb] = useState<number>(4.0);
+  const [questionCount, setQuestionCount] = useState<number>(20);
+  const [memoryLimitGb, setMemoryLimitGb] = useState<number>(4.9);
+  const [hasManuallySetMemory, setHasManuallySetMemory] = useState(false);
+
+  const { data: hwData } = useQuery({
+    queryKey: ["hardware"],
+    queryFn: fetchHardware,
+  });
+
+  useEffect(() => {
+    if (hwData?.detected?.budget_gb && !hasManuallySetMemory) {
+      setMemoryLimitGb(hwData.detected.budget_gb);
+    }
+  }, [hwData, hasManuallySetMemory]);
 
   // Preset handler
   const handlePresetChange = (newPreset: "quick" | "balanced" | "custom") => {
@@ -67,7 +87,7 @@ export const Benchmark: React.FC = () => {
       setChunkSizes([256]);
       setTopKs([3]);
       setQuantizations(["Q4_K_M"]);
-      setQuestionCount(50);
+      setQuestionCount(20);
     } else if (newPreset === "balanced") {
       setChunkSizes([256, 512]);
       setTopKs([3, 5]);
@@ -142,6 +162,7 @@ export const Benchmark: React.FC = () => {
     mutationFn: startBenchmarkRun,
     onSuccess: (data) => {
       setActiveRunId(data.run_id);
+      setIsStreaming(true);
       queryClient.invalidateQueries({ queryKey: ["runs"] });
     },
   });
@@ -151,14 +172,15 @@ export const Benchmark: React.FC = () => {
       return;
     }
     startMutation.mutate({
-      name: `Benchmark (${preset.toUpperCase()}: k=${topKs.join(",")}, c=${chunkSizes.join(",")})`,
+      name: `Benchmark (${preset.toUpperCase()}: ${activeDataset?.name?.split("/").pop() || "QA"})`,
+      dataset_id: activeDataset?.id,
       chunk_sizes: chunkSizes,
       top_ks: topKs,
       quantizations: quantizations,
-      embedding_models: [setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"],
+      embedding_models: [setup?.embedding_model || "BAAI/bge-small-en-v1.5"],
       language_models: [setup.language_model],
       question_count: questionCount,
-      runner_type: runnerType,
+      runner_type: "local",
     });
   };
 
@@ -190,7 +212,7 @@ export const Benchmark: React.FC = () => {
       </div>
 
       {/* Live Running Progress Card */}
-      {(isStreaming || liveEvents) && (
+      {(isStreaming || activeRunId || liveEvents) && (
         <div className="card-paper p-6 md:p-8 bg-paper-raised border-2 border-accent space-y-4">
           <div className="flex items-center justify-between pb-3 border-b border-line">
             <div className="flex items-center gap-2">
@@ -282,7 +304,21 @@ export const Benchmark: React.FC = () => {
       )}
 
       {/* 3-Step Guided Flow */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
+      <div className="space-y-6">
+        {/* Active Dataset Chip */}
+        <div className="p-4 bg-paper rounded-lg border border-line flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
+          <div className="flex items-center gap-2.5">
+            <Database className="w-4 h-4 text-accent shrink-0" />
+            <span className="font-sans text-ink">
+              Active Dataset: <strong className="font-mono">{activeDataset?.name || "Core RAG QA Benchmark"}</strong> ({activeDataset?.num_questions || 5} questions loaded in SQLite)
+            </span>
+          </div>
+          <Link to="/models" className="text-accent hover:underline font-semibold font-sans">
+            Change / Import Dataset →
+          </Link>
+        </div>
+
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
         {/* Step 1 & 2 (8 cols on lg) */}
         <div className="lg:col-span-7 space-y-6">
           {/* Step 1: Presets */}
@@ -306,7 +342,7 @@ export const Benchmark: React.FC = () => {
                 }`}
               >
                 <div className="font-serif font-bold text-sm text-ink">Quick</div>
-                <div className="text-xs text-ink-soft mt-1 font-sans">1 config · 5 questions</div>
+                <div className="text-xs text-ink-soft mt-1 font-sans">1 config · 20 questions</div>
               </button>
 
               <button
@@ -319,7 +355,7 @@ export const Benchmark: React.FC = () => {
                 }`}
               >
                 <div className="font-serif font-bold text-sm text-ink">Balanced</div>
-                <div className="text-xs text-ink-soft mt-1 font-sans">4 configs · 20 questions</div>
+                <div className="text-xs text-ink-soft mt-1 font-sans">4 configs · 50 questions</div>
               </button>
 
               <button
@@ -454,14 +490,22 @@ export const Benchmark: React.FC = () => {
                     <span className="text-ink-soft">Hardware memory limit (GB)</span>
                     <span className="font-mono font-bold text-ink">{memoryLimitGb} GB</span>
                   </div>
+                  {hwData?.detected && (
+                    <p className="text-[10px] text-ink-soft font-mono">
+                      Source: Auto-detected {hwData.detected.name} ({hwData.detected.budget_gb} GB budget)
+                    </p>
+                  )}
                   <input
                     type="range"
                     aria-label="Hardware memory limit in GB"
                     min={1.0}
                     max={16.0}
-                    step={0.5}
+                    step={0.1}
                     value={memoryLimitGb}
-                    onChange={(e) => setMemoryLimitGb(Number(e.target.value))}
+                    onChange={(e) => {
+                      setHasManuallySetMemory(true);
+                      setMemoryLimitGb(Number(e.target.value));
+                    }}
                     className="w-full accent-accent cursor-pointer"
                   />
                 </div>
@@ -489,13 +533,23 @@ export const Benchmark: React.FC = () => {
                 <span className="font-bold text-ink">{previewData.total_configurations}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-line">
-                <span className="font-sans text-ink-soft">Total API calls:</span>
-                <span className="font-bold text-ink">{previewData.total_api_calls}</span>
+                <span className="font-sans text-ink-soft">Active dataset:</span>
+                <span className="font-bold text-ink truncate max-w-[170px]">{activeDataset?.name || "Core RAG QA"}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line">
+                <span className="font-sans text-ink-soft">Total model calls:</span>
+                <span className="font-bold text-ink">{previewData.total_model_calls || previewData.total_api_calls}</span>
+              </div>
+              <div className="flex justify-between py-1.5 border-b border-line">
+                <span className="font-sans text-ink-soft">Formula:</span>
+                <span className="text-[11px] text-ink-soft">{previewData.total_configurations} configs × {questionCount} Qs</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-line">
                 <span className="font-sans text-ink-soft">Estimated time:</span>
                 <span className="font-bold text-ink">
-                  ~{previewData.estimated_duration_minutes} min ({previewData.estimated_duration_seconds}s)
+                  {previewData.estimated_duration_seconds != null
+                    ? `~${previewData.estimated_duration_minutes} min (${previewData.estimated_duration_seconds}s)`
+                    : "Unknown until the first run"}
                 </span>
               </div>
 
@@ -529,6 +583,7 @@ export const Benchmark: React.FC = () => {
             <span>{startMutation.isPending ? "Starting..." : "Start benchmark run"}</span>
           </button>
         </div>
+      </div>
       </div>
 
       {/* Past Runs Section */}

@@ -1,14 +1,15 @@
 """Recommendation endpoint."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.models import ConfigMetrics, Run, RunConfig
+from app.models import Run, RunConfig
 from app.recommend import find_recommendation
 
 router = APIRouter(prefix="/api/recommend", tags=["recommend"])
@@ -16,8 +17,8 @@ router = APIRouter(prefix="/api/recommend", tags=["recommend"])
 
 @router.get("")
 async def get_recommendation(
-    memory_gb: Optional[float] = Query(default=None),
-    latency_s: Optional[float] = Query(default=None),
+    memory_gb: float | None = Query(default=None),
+    latency_s: float | None = Query(default=None),
     goal: str = Query(default="best_quality"),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:

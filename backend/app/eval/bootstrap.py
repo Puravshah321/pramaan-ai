@@ -2,18 +2,17 @@
 from __future__ import annotations
 
 import numpy as np
-from typing import Optional
 
 
 def compute_bootstrap_ci(
     scores: list[float],
     n_resamples: int = 1000,
     confidence_level: float = 0.95,
-) -> tuple[Optional[float], Optional[float]]:
+) -> tuple[float | None, float | None]:
     """Computes a bootstrap confidence interval for the mean score.
-    Returns (lower_bound, upper_bound) or (None, None) if sample size < 100.
+    Returns (lower_bound, upper_bound) or (None, None) if sample size < 10.
     """
-    if len(scores) < 100:
+    if len(scores) < 10:
         return None, None
 
     arr = np.array(scores, dtype=np.float64)

@@ -88,7 +88,7 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
     setup?.embedding_model || "sentence-transformers/all-MiniLM-L6-v2"
   );
   const [activeLanguage, setActiveLanguage] = useState(
-    setup?.language_model || ""
+    setup?.language_model || "Qwen/Qwen2.5-0.5B-Instruct"
   );
   const [saveSuccess, setSaveSuccess] = useState(false);
 
@@ -96,6 +96,7 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
     if (setup) {
       if (setup.embedding_model) setActiveEmbedding(setup.embedding_model);
       if (setup.language_model) setActiveLanguage(setup.language_model);
+      else setActiveLanguage("Qwen/Qwen2.5-0.5B-Instruct");
     }
   }, [setup]);
 
@@ -459,7 +460,7 @@ export const Home: React.FC<HomeProps> = ({ onStartTour }) => {
                       Suggested edge models (local runner runnable):
                     </p>
                     <div className="flex flex-col gap-1.5">
-                      {suggestions.local_instruct.map((m) => (
+                      {suggestions.local_instruct.map((m: any) => (
                         <button
                           key={m.id}
                           type="button"
@@ -614,7 +615,7 @@ const LiveEvidenceCard: React.FC<{ showcase?: ShowcaseData }> = ({ showcase }) =
 
       {/* Caption under card */}
       <div className="text-right text-[11px] font-mono text-sage/70">
-        Answered by {showcase.setup_used || "model"}
+        Answered by {showcase.setup_used || "model"} locally
       </div>
     </div>
   );

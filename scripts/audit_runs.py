@@ -70,6 +70,14 @@ def audit_database():
         if answers and heuristic_matches >= len(answers) * 0.5:
             is_heuristic = True
 
+        # Check for 220 MB idle GPU baseline anomaly (E10)
+        cursor.execute("""
+            SELECT memory_mb FROM config_metrics
+            WHERE run_config_id IN (SELECT id FROM run_configs WHERE run_id = ?)
+        """, (run_id,))
+        mems = [r[0] for r in cursor.fetchall() if r[0] is not None]
+        has_220mb_anomaly = any(0 < m < 250.0 for m in mems)
+
         # Check conditions
         if err_count > 0:
             reason = f"Contaminated: {err_count}/{ans_count} answers encountered API failure and used heuristic extraction fallback"
@@ -81,6 +89,11 @@ def audit_database():
             cursor.execute("UPDATE runs SET is_valid = 0, invalid_reason = ? WHERE id = ?", (reason, run_id))
             invalidated_count += 1
             print(f"  [INVALID] Run {run_id} ('{run_name}'): {reason} (includes 0.473 F1 baseline run)")
+        elif has_220mb_anomaly:
+            reason = "Contaminated: 220 MB peak memory anomaly reflects idle DWM GPU baseline instead of model RSS/VRAM"
+            cursor.execute("UPDATE runs SET is_valid = 0, invalid_reason = ? WHERE id = ?", (reason, run_id))
+            invalidated_count += 1
+            print(f"  [INVALID] Run {run_id} ('{run_name}'): {reason}")
         elif status != "completed" or ans_count == 0:
             reason = "Incomplete or cancelled run"
             cursor.execute("UPDATE runs SET is_valid = 0, invalid_reason = ? WHERE id = ?", (reason, run_id))

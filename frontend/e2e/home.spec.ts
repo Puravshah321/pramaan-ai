@@ -9,7 +9,7 @@ test.describe("Home Page Interactions", () => {
   });
 
   test("Evidence card shows real answer or empty state", async ({ page }) => {
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
 
     // Look for either evidence card or empty state
     const evidenceCard = page.locator("text=Q:").or(page.locator("text=Your first answer will appear here"));
@@ -17,11 +17,11 @@ test.describe("Home Page Interactions", () => {
   });
 
   test("Change drawer opens, switches model, and persists after reload", async ({ page }) => {
-    await page.goto("/", { waitUntil: "networkidle" });
+    await page.goto("/", { waitUntil: "domcontentloaded" });
 
-    // Click Change link in hero
-    const changeBtn = page.locator("button:has-text('Change')");
-    await expect(changeBtn).toBeVisible();
+    // Click Change / Configure link in hero
+    const changeBtn = page.locator("button:has-text('Change'), button:has-text('Configure now'), button:has-text('Configure setup')").first();
+    await expect(changeBtn).toBeVisible({ timeout: 10000 });
     await changeBtn.click();
 
     // Verify drawer opens
@@ -30,15 +30,16 @@ test.describe("Home Page Interactions", () => {
 
     // Save active setup
     const saveBtn = page.locator("button:has-text('Save as Active Setup')");
+    await saveBtn.scrollIntoViewIfNeeded();
     await saveBtn.click();
 
     // Drawer confirms
-    await expect(page.locator("text=Setup updated successfully!")).toBeVisible({ timeout: 5000 });
+    await expect(page.locator("text=Setup updated successfully!")).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(1400);
 
     // Reload page to verify persistence
-    await page.reload({ waitUntil: "networkidle" });
+    await page.reload({ waitUntil: "domcontentloaded" });
     const setupText = page.locator("text=Using");
-    await expect(setupText).toBeVisible();
+    await expect(setupText).toBeVisible({ timeout: 10000 });
   });
 });

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import time
 from typing import Any
+
 from app.pipeline.embed import embed_texts
 from app.pipeline.index import VectorIndex
 

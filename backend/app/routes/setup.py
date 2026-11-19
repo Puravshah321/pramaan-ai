@@ -1,7 +1,8 @@
 """Active setup endpoints."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
+
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -14,10 +15,10 @@ router = APIRouter(prefix="/api/setup", tags=["setup"])
 
 
 class UpdateSetupRequest(BaseModel):
-    embedding_model: Optional[str] = None
-    language_model: Optional[str] = None
-    dataset_id: Optional[str] = None
-    ui_preferences: Optional[dict[str, Any]] = None
+    embedding_model: str | None = None
+    language_model: str | None = None
+    dataset_id: str | None = None
+    ui_preferences: dict[str, Any] | None = None
 
 
 @router.get("")
@@ -27,15 +28,20 @@ async def get_setup(session: AsyncSession = Depends(get_db)) -> dict[str, Any]:
     cfg = result.scalar_one_or_none()
 
     if not cfg:
-        # Create default - initially None language_model unless chosen
+        # Default to verified locally available edge models
         cfg = AppSettings(
             key="default",
-            embedding_model="sentence-transformers/all-MiniLM-L6-v2",
-            language_model=None,
+            embedding_model="BAAI/bge-small-en-v1.5",
+            language_model="Qwen/Qwen2.5-0.5B-Instruct",
             dataset_id=None,
             ui_preferences={},
         )
         session.add(cfg)
+        await session.commit()
+    elif not cfg.language_model:
+        cfg.language_model = "Qwen/Qwen2.5-0.5B-Instruct"
+        if not cfg.embedding_model:
+            cfg.embedding_model = "BAAI/bge-small-en-v1.5"
         await session.commit()
 
     return {
@@ -55,6 +61,7 @@ async def get_suggestions() -> dict[str, Any]:
 
 
 @router.put("")
+@router.post("")
 async def update_setup(
     req: UpdateSetupRequest,
     session: AsyncSession = Depends(get_db),

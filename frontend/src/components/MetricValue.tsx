@@ -3,7 +3,7 @@ import React from "react";
 interface MetricValueProps {
   value: number | string | null | undefined;
   unit?: string;
-  source?: "measured" | "api" | "estimated" | "not available";
+  source?: "measured" | "local" | "api" | "estimated" | "not available";
   n?: number;
   ciLower?: number | null;
   ciUpper?: number | null;
@@ -23,11 +23,36 @@ export const MetricValue: React.FC<MetricValueProps> = ({
     return <span className="text-ink-soft text-sm font-mono">—</span>;
   }
 
-  const formattedVal = formatter ? formatter(value) : value.toString();
+  let formattedVal: string;
+  let displayUnit = unit;
+
+  if (formatter) {
+    formattedVal = formatter(value);
+  } else if (typeof value === "number") {
+    if (unit === "ms" || unit === "s") {
+      // Latency formatting: standard is ms storage
+      const ms = unit === "s" && value < 100 ? value * 1000 : value;
+      if (ms >= 1000) {
+        formattedVal = (ms / 1000).toFixed(2);
+        displayUnit = "s";
+      } else {
+        formattedVal = Math.round(ms).toString();
+        displayUnit = "ms";
+      }
+    } else if (Number.isInteger(value)) {
+      formattedVal = value.toString();
+    } else {
+      // Float metrics (F1, EM, Recall) default to 3 decimals
+      formattedVal = value.toFixed(3);
+    }
+  } else {
+    formattedVal = String(value);
+  }
 
   const sourceLabels: Record<string, { label: string; class: string }> = {
     measured: { label: "Measured", class: "bg-sage/20 text-sage-deep border-sage" },
-    api: { label: "API latency", class: "bg-paper text-ink-soft border-line" },
+    local: { label: "Local latency", class: "bg-paper text-ink-soft border-line" },
+    api: { label: "Local latency", class: "bg-paper text-ink-soft border-line" },
     estimated: { label: "Estimated", class: "bg-ochre/15 text-ochre border-ochre/40" },
     "not available": { label: "N/A", class: "bg-paper text-ink-soft border-line" },
   };
@@ -38,7 +63,7 @@ export const MetricValue: React.FC<MetricValueProps> = ({
     <div className="inline-flex flex-col items-start gap-0.5">
       <div className="flex items-baseline gap-1 font-mono text-ink">
         <span className="font-semibold">{formattedVal}</span>
-        {unit && <span className="text-xs text-ink-soft">{unit}</span>}
+        {displayUnit && <span className="text-xs text-ink-soft">{displayUnit}</span>}
       </div>
 
       {ciLower !== null && ciLower !== undefined && ciUpper !== null && ciUpper !== undefined && (

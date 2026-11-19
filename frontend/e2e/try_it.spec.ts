@@ -10,7 +10,7 @@ test.describe("Try It End to End", () => {
 
   test("Upload PDF, prepare, ask question, and read answer with evidence", async ({ page }) => {
     test.setTimeout(60000);
-    await page.goto("/try-it", { waitUntil: "networkidle" });
+    await page.goto("/try-it", { waitUntil: "domcontentloaded" });
 
     // Switch to Upload tab
     const uploadTabBtn = page.locator("button:has-text('Upload (PDF, TXT, MD)')");

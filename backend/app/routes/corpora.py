@@ -1,40 +1,231 @@
 """Corpora, dataset import and synthetic question generation endpoints."""
 from __future__ import annotations
 
+import hashlib
 import io
 import uuid
-from typing import Any, Optional
-from fastapi import APIRouter, Depends, File, Form, UploadFile
-from pydantic import BaseModel
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
+
 import pypdf
+from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from pydantic import BaseModel
+from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db import get_db
 from app.hf.datasets import get_dataset_splits_and_rows
 from app.hf.inference import generate_text
-from app.models import Dataset, Document, Question
+from app.models import AppSettings, Dataset, Document, Question
 
 router = APIRouter(tags=["corpora"])
 
 
 class ImportDatasetRequest(BaseModel):
     hub_dataset_id: str
-    split: Optional[str] = "train"
+    split: str | None = "train"
     num_rows: int = 50
+
+
+class LoadDatasetRequest(BaseModel):
+    dataset_id: str
+    split: str | None = "validation"
+    count: int = 200
+
+
+@router.post("/api/corpora/load-dataset")
+async def load_hub_dataset(
+    req: LoadDatasetRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Downloads sample rows from Hugging Face Datasets Server,
+    ingests passages and questions into SQLite, and marks dataset active.
+    """
+    clean_id = req.dataset_id.replace("/", "_")
+    target_name = req.dataset_id
+    split_choice = req.split or "validation"
+
+    # 1. Fetch splits and rows
+    data = await get_dataset_splits_and_rows(req.dataset_id.strip(), split=split_choice, offset=0, length=req.count)
+    rows = data.get("rows", [])
+
+    # If rows empty and split not train, try default/train
+    if not rows and split_choice != "train":
+        data = await get_dataset_splits_and_rows(req.dataset_id.strip(), split="train", offset=0, length=req.count)
+        rows = data.get("rows", [])
+        if rows:
+            split_choice = "train"
+
+    if not rows:
+        raise HTTPException(
+            status_code=400,
+            detail=data.get("error") or f"No rows returned from Datasets Server for {req.dataset_id} (split: {split_choice})",
+        )
+
+    # Clean existing documents and questions for clean_id to avoid unique constraint collisions
+    await session.execute(delete(Question).where(Question.dataset_id == clean_id))
+    await session.execute(delete(Document).where(Document.dataset_id == clean_id))
+
+    # Create or update Dataset record
+    ds_record = await session.get(Dataset, clean_id)
+    if not ds_record:
+        ds_record = Dataset(
+            id=clean_id,
+            name=target_name,
+            source="hub",
+            split=split_choice,
+        )
+        session.add(ds_record)
+    else:
+        ds_record.split = split_choice
+        ds_record.name = target_name
+
+    docs_count = 0
+    q_count = 0
+    seen_contexts: dict[str, str] = {}
+
+    for _idx, r in enumerate(rows):
+        passage = (
+            r.get("context")
+            or r.get("passage")
+            or r.get("document")
+            or r.get("text")
+        )
+        if not passage and isinstance(r, dict):
+            # Pick first large text field if standard context not found
+            for k, v in r.items():
+                if isinstance(v, str) and len(v.strip()) > 50 and k not in ["id", "question", "query"]:
+                    passage = v.strip()
+                    break
+
+        if not passage:
+            continue
+
+        passage_str = str(passage).strip()
+        # Cap document context length to 2,500 chars to avoid memory explosion
+        if len(passage_str) > 2500:
+            cut = passage_str[:2500]
+            last_period = cut.rfind(".")
+            passage_str = cut[: last_period + 1] if last_period > 1000 else cut + "..."
+
+        q_text = r.get("question") or r.get("query")
+        if not q_text:
+            continue
+
+        ans_raw = r.get("answers") or r.get("answer") or ""
+
+        # Normalize answers to deduplicated list
+        ans_list: list[str] = []
+        if isinstance(ans_raw, dict):
+            val = ans_raw.get("value")
+            if val and str(val).strip():
+                ans_list.append(str(val).strip())
+            aliases = ans_raw.get("aliases", [])
+            if isinstance(aliases, list):
+                for a in aliases:
+                    if a and str(a).strip():
+                        ans_list.append(str(a).strip())
+            raw_text = ans_raw.get("text", [])
+            if isinstance(raw_text, list):
+                ans_list.extend([str(t).strip() for t in raw_text if str(t).strip()])
+            elif isinstance(raw_text, str) and raw_text.strip():
+                ans_list.append(raw_text.strip())
+        elif isinstance(ans_raw, list):
+            ans_list = [str(t).strip() for t in ans_raw if str(t).strip()]
+        elif isinstance(ans_raw, str) and ans_raw.strip():
+            ans_list = [ans_raw.strip()]
+
+        ans_list = list(dict.fromkeys(ans_list))
+        ans_text = " | ".join(ans_list) if ans_list else ""
+
+        if passage_str not in seen_contexts:
+            p_hash = hashlib.sha256(passage_str.encode("utf-8")).hexdigest()[:10]
+            doc_id = f"doc_{clean_id}_{docs_count}_{p_hash}"
+            doc = Document(id=doc_id, dataset_id=clean_id, title=f"Doc {docs_count+1}", content=passage_str)
+            session.add(doc)
+            seen_contexts[passage_str] = doc_id
+            docs_count += 1
+
+        q_str = str(q_text).strip()
+        q_hash = hashlib.sha256(q_str.encode("utf-8")).hexdigest()[:10]
+        q_id = f"q_{clean_id}_{q_count}_{q_hash}"
+        q = Question(
+            id=q_id,
+            dataset_id=clean_id,
+            question=q_str,
+            gold_answer=ans_text,
+            is_synthetic=False,
+        )
+        session.add(q)
+        q_count += 1
+
+    ds_record.num_docs = docs_count
+    ds_record.num_questions = q_count
+
+    # Set as active dataset in AppSettings
+    settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+    app_settings = settings_res.scalar_one_or_none()
+    if not app_settings:
+        app_settings = AppSettings(key="default", dataset_id=clean_id)
+        session.add(app_settings)
+    else:
+        app_settings.dataset_id = clean_id
+
+    await session.commit()
+
+    return {
+        "id": clean_id,
+        "name": target_name,
+        "source": "hub",
+        "split": split_choice,
+        "num_docs": docs_count,
+        "num_questions": q_count,
+        "active": True,
+    }
+
+
+@router.get("/api/datasets/active")
+async def get_active_dataset(
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Returns the currently active dataset and question count."""
+    settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+    app_settings = settings_res.scalar_one_or_none()
+    ds_id = app_settings.dataset_id if app_settings else None
+
+    if ds_id:
+        ds = await session.get(Dataset, ds_id)
+        if ds:
+            return {
+                "id": ds.id,
+                "name": ds.name,
+                "source": ds.source,
+                "split": ds.split,
+                "num_docs": ds.num_docs,
+                "num_questions": ds.num_questions,
+            }
+
+    # Default fallback
+    return {
+        "id": "default",
+        "name": "Core RAG QA Benchmark",
+        "source": "built-in",
+        "split": "test",
+        "num_docs": 1,
+        "num_questions": 5,
+    }
 
 
 class GenerateQuestionsRequest(BaseModel):
     dataset_id: str
-    language_model: Optional[str] = None
+    language_model: str | None = None
     count: int = 5
 
 
 @router.post("/api/corpora")
 async def create_corpus(
-    dataset_name: Optional[str] = Form(None),
-    hub_id: Optional[str] = Form(None),
-    raw_text: Optional[str] = Form(None),
+    dataset_name: str | None = Form(None),
+    hub_id: str | None = Form(None),
+    raw_text: str | None = Form(None),
     files: list[UploadFile] = File(default=[]),
     session: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
@@ -230,9 +421,9 @@ async def generate_synthetic_questions(
 
 
 class SuggestQuestionsRequest(BaseModel):
-    dataset_id: Optional[str] = None
-    document_text: Optional[str] = None
-    language_model: Optional[str] = None
+    dataset_id: str | None = None
+    document_text: str | None = None
+    language_model: str | None = None
 
 
 @router.post("/api/questions/suggest")
@@ -269,10 +460,10 @@ async def suggest_questions_for_document(
         f"Format:\n1. <question>\n2. <question>\n3. <question>"
     )
     res = await generate_text(model_id=req.language_model, prompt=prompt, max_tokens=100)
-    lines = [l.strip() for l in res.get("text", "").split("\n") if l.strip()]
+    lines = [item.strip() for item in res.get("text", "").split("\n") if item.strip()]
     questions = []
-    for l in lines:
-        cleaned = l
+    for item in lines:
+        cleaned = item
         for prefix in ["1.", "2.", "3.", "1)", "2)", "3)", "- ", "* "]:
             if cleaned.startswith(prefix):
                 cleaned = cleaned[len(prefix):].strip()

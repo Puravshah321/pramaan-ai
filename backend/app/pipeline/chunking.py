@@ -19,9 +19,8 @@ def chunk_text(
 
     chunks = []
     step = max(1, chunk_size - overlap)
-    chunk_idx = 0
 
-    for i in range(0, len(words), step):
+    for chunk_idx, i in enumerate(range(0, len(words), step)):
         chunk_words = words[i : i + chunk_size]
         chunk_str = " ".join(chunk_words)
         chunks.append({
@@ -31,7 +30,6 @@ def chunk_text(
             "start_word": i,
             "end_word": i + len(chunk_words),
         })
-        chunk_idx += 1
         if i + chunk_size >= len(words):
             break
 

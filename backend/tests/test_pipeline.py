@@ -1,8 +1,8 @@
 """Pipeline unit tests: chunking, retrieval, eval metrics, reliability, and leakage-free splits."""
 import time
-import pytest
-from app.pipeline.chunking import chunk_text
+
 from app.eval.metrics import compute_exact_match, compute_f1, compute_recall_at_k
+from app.pipeline.chunking import chunk_text
 from app.reliability.features import extract_features
 from app.reliability.train import train_reliability_checker
 
@@ -67,7 +67,7 @@ def test_question_split_no_leakage():
     # Synthetic samples with repeated questions
     records = []
     for q_id in range(20):
-        for run_cfg in range(4):
+        for _run_cfg in range(4):
             records.append({
                 "question_id": f"q_{q_id}",
                 "correct": (q_id % 2 == 0),

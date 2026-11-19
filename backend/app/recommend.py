@@ -1,13 +1,13 @@
 """Hardware-aware recommendation engine based strictly on measured configurations."""
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 
 def find_recommendation(
     configs_with_metrics: list[dict[str, Any]],
-    memory_limit_gb: Optional[float] = None,
-    latency_limit_s: Optional[float] = None,
+    memory_limit_gb: float | None = None,
+    latency_limit_s: float | None = None,
     goal: str = "best_quality",  # "best_quality", "balanced", "fastest", "smallest"
 ) -> dict[str, Any]:
     """Filters configurations by limits and ranks according to the user's goal.

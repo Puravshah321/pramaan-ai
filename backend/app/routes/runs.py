@@ -3,8 +3,10 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import statistics
 import uuid
-from typing import Any, Optional
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -13,9 +15,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.db import get_db
-from app.hf.hub import get_model_details
 from app.jobs import execute_run_task, run_manager, stream_run_events
-from app.models import AppSettings, Dataset, Document, Job, Question, Run, RunConfig
+from app.models import AppSettings, ConfigMetrics, Dataset, Document, Job, Question, Run, RunConfig
+from app.runners.local import estimate_model_memory
 
 router = APIRouter(prefix="/api/runs", tags=["runs"])
 
@@ -27,24 +29,27 @@ class RunPreviewRequest(BaseModel):
     language_models: list[str] = []
     quantizations: list[str] = ["none"]
     question_count: int = 20
-    memory_limit_gb: Optional[float] = 4.0
+    memory_limit_gb: float | None = 4.0
 
 
 class StartRunRequest(BaseModel):
-    name: Optional[str] = None
-    dataset_id: Optional[str] = None
+    name: str | None = None
+    dataset_id: str | None = None
     chunk_sizes: list[int] = [256]
     top_ks: list[int] = [3]
     embedding_models: list[str] = ["sentence-transformers/all-MiniLM-L6-v2"]
     language_models: list[str] = []
     quantizations: list[str] = ["none"]
     question_count: int = 20
-    runner_type: str = "hosted"
+    runner_type: str = "local"
 
 
 @router.post("/preview")
-async def preview_run(req: RunPreviewRequest) -> dict[str, Any]:
-    """Cost and feasibility preview computed live."""
+async def preview_run(
+    req: RunPreviewRequest,
+    session: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """Cost and feasibility preview computed live using unified memory estimator."""
     total_configs = (
         len(req.chunk_sizes)
         * len(req.top_ks)
@@ -52,22 +57,18 @@ async def preview_run(req: RunPreviewRequest) -> dict[str, Any]:
         * len(req.language_models)
         * len(req.quantizations)
     )
-    total_api_calls = total_configs * req.question_count
+    total_calls = total_configs * req.question_count
 
-    # Estimate memory per language model
+    # Estimate memory per language model using single source of truth
     configs_preview = []
     exceeded_count = 0
 
     for lm in req.language_models:
-        details = await get_model_details(lm)
-        est_mem_gb = details.get("estimated_memory_gb") or 1.0
-
         for cs in req.chunk_sizes:
             for k in req.top_ks:
                 for qz in req.quantizations:
-                    # If quantized (e.g. 4-bit vs 16-bit), adjust memory
-                    multiplier = 0.35 if "4" in qz else (0.6 if "8" in qz else 1.0)
-                    config_mem_gb = round(est_mem_gb * multiplier, 2)
+                    mem_info = estimate_model_memory(lm, quantization=qz)
+                    config_mem_gb = mem_info["estimated_memory_gb"]
                     exceeds = bool(req.memory_limit_gb and config_mem_gb > req.memory_limit_gb)
                     if exceeds:
                         exceeded_count += 1
@@ -78,18 +79,42 @@ async def preview_run(req: RunPreviewRequest) -> dict[str, Any]:
                         "top_k": k,
                         "quantization": qz,
                         "estimated_memory_gb": config_mem_gb,
-                        "memory_source": "estimated",
+                        "memory_source": "unified_estimator",
                         "exceeds_hardware_cap": exceeds,
                     })
 
-    # Estimate time: ~0.8s per call for hosted API
-    est_seconds = round(total_api_calls * 0.8, 1)
+    # Estimate duration based on historical measurements; return None if unmeasured
+    est_seconds: float | None = None
+    est_minutes: float | None = None
+
+    if req.language_models:
+        stmt = (
+            select(ConfigMetrics.latency_p50)
+            .join(RunConfig, RunConfig.id == ConfigMetrics.run_config_id)
+            .join(Run, Run.id == RunConfig.run_id)
+            .where(
+                Run.is_valid.is_(True),
+                RunConfig.language_model.in_(req.language_models),
+                ConfigMetrics.latency_p50 > 0,
+            )
+        )
+        res = await session.execute(stmt)
+        latencies = [val for val in res.scalars().all() if val is not None]
+        if latencies:
+            median_ms = statistics.median(latencies)
+            # per-question latency is in milliseconds
+            est_seconds = round(total_calls * (median_ms / 1000.0), 1)
+            est_minutes = round(est_seconds / 60.0, 1)
 
     return {
         "total_configurations": total_configs,
-        "total_api_calls": total_api_calls,
+        "total_api_calls": total_calls,
+        "total_model_calls": total_calls,
+        "total_inference_calls": total_calls,
+        "question_count": req.question_count,
+        "formula": f"{total_configs} configs × {req.question_count} questions = {total_calls} calls",
         "estimated_duration_seconds": est_seconds,
-        "estimated_duration_minutes": round(est_seconds / 60, 1),
+        "estimated_duration_minutes": est_minutes,
         "memory_limit_gb": req.memory_limit_gb,
         "exceeded_hardware_cap_count": exceeded_count,
         "configurations": configs_preview[:20],
@@ -109,15 +134,22 @@ async def start_run(
     docs: list[dict[str, Any]] = []
     questions: list[dict[str, Any]] = []
 
-    if req.dataset_id:
+    target_ds_id = req.dataset_id
+    if not target_ds_id:
+        settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
+        app_settings = settings_res.scalar_one_or_none()
+        if app_settings and app_settings.dataset_id:
+            target_ds_id = app_settings.dataset_id
+
+    if target_ds_id:
         doc_res = await session.execute(
-            select(Document).where(Document.dataset_id == req.dataset_id)
+            select(Document).where(Document.dataset_id == target_ds_id)
         )
         docs = [{"id": d.id, "content": d.content} for d in doc_res.scalars().all()]
 
         q_res = await session.execute(
             select(Question)
-            .where(Question.dataset_id == req.dataset_id)
+            .where(Question.dataset_id == target_ds_id)
             .limit(req.question_count)
         )
         questions = [
@@ -168,9 +200,10 @@ async def start_run(
         id=run_id,
         name=run_name,
         status="pending",
+        dataset_id=target_ds_id or "rajpurkar/squad_v2",
         question_count=len(questions),
         runner_type=req.runner_type,
-        hardware_desc={"runner": req.runner_type},
+        hardware_desc={"runner": req.runner_type, "dataset_id": target_ds_id or "rajpurkar/squad_v2"},
     )
     session.add(run_record)
 
@@ -180,7 +213,7 @@ async def start_run(
         settings_res = await session.execute(select(AppSettings).where(AppSettings.key == "default"))
         app_settings = settings_res.scalar_one_or_none()
         if app_settings and app_settings.language_model:
-            target_lms = [app_settings.language_model]
+            target_lms = [str(app_settings.language_model)]
         else:
             raise HTTPException(
                 status_code=400,

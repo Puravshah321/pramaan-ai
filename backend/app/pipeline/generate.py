@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any
+
 from app.hf.inference import generate_text
 from app.runners.local import run_local_inference
 

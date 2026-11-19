@@ -1,16 +1,14 @@
-"""Hosted API runner: executes benchmark via Hugging Face Inference APIs."""
+"""Runner for single QA benchmark questions using local pipeline inference."""
 from __future__ import annotations
 
 import time
 from typing import Any
-import psutil
 
 from app.eval.metrics import compute_exact_match, compute_f1, compute_recall_at_k
 from app.hf.inference import generate_text
-from app.pipeline.retrieve import retrieve_chunks
 from app.pipeline.index import VectorIndex
+from app.pipeline.retrieve import retrieve_chunks
 from app.reliability.features import extract_features
-from app.runners.local import run_local_inference
 
 
 async def run_single_question(
@@ -19,10 +17,10 @@ async def run_single_question(
     top_k: int,
     question: str,
     gold_answer: str,
-    runner_type: str = "hosted",
-    quantization: str = "none",
+    runner_type: str = "local",
+    quantization: str = "q4_k_m",
 ) -> dict[str, Any]:
-    """Runs a single question end-to-end through retrieval and generation."""
+    """Runs a single question end-to-end through retrieval and generation locally."""
     t_start = time.perf_counter()
 
     # 1. Retrieval
@@ -38,23 +36,14 @@ async def run_single_question(
     )
 
     t_gen_0 = time.perf_counter()
-    if runner_type == "local":
-        gen_res = await run_local_inference(
-            model_id=language_model,
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            max_tokens=64,
-            temperature=0.0,
-            quantization=quantization,
-        )
-    else:
-        gen_res = await generate_text(
-            model_id=language_model,
-            prompt=user_prompt,
-            system_prompt=system_prompt,
-            max_tokens=64,
-            temperature=0.0,
-        )
+    gen_res = await generate_text(
+        model_id=language_model,
+        prompt=user_prompt,
+        system_prompt=system_prompt,
+        max_tokens=64,
+        temperature=0.0,
+        quantization=quantization,
+    )
     t_gen_1 = time.perf_counter()
     gen_ms = (t_gen_1 - t_gen_0) * 1000
 
@@ -62,7 +51,7 @@ async def run_single_question(
     answer_text = gen_res.get("text", "")
     err = gen_res.get("error") or ret_res.get("error")
 
-    # 3. Metrics: Failed API calls are counted and shown, never scored as wrong answers
+    # 3. Metrics: Failed calls are recorded honestly, never scored as wrong answers
     if answer_text:
         em = compute_exact_match(answer_text, gold_answer)
         f1 = compute_f1(answer_text, gold_answer)

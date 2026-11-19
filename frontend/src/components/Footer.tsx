@@ -58,8 +58,8 @@ export const Footer: React.FC = () => {
           <span className="text-xs text-sage/70">MIT Licence</span>
         </div>
 
-        {/* Right: Live API Status indicator */}
-        <div className="flex items-center gap-3 text-xs font-mono bg-[#201D1A] px-3 py-1.5 rounded-full border border-line/20 text-paper">
+        {/* Right: Live Local Engine Status indicator */}
+        <div className="flex items-center gap-3 text-xs font-mono bg-[#201D1A] px-3.5 py-1.5 rounded-full border border-line/20 text-paper">
           <div className="flex items-center gap-1.5">
             <span
               className={`w-2 h-2 rounded-full ${backendOk ? "bg-sage-deep" : "bg-accent"}`}
@@ -70,10 +70,8 @@ export const Footer: React.FC = () => {
           <span className="text-sage/40">/</span>
 
           <div className="flex items-center gap-1.5">
-            <span
-              className={`w-2 h-2 rounded-full ${hfOk ? "bg-sage-deep" : "bg-ochre"}`}
-            />
-            <span className="text-sage">HF API: {hfOk ? "Reachable" : "Unreachable"}</span>
+            <span className="w-2 h-2 rounded-full bg-sage-deep" />
+            <span className="text-sage">Runner: Local (llama-cpp)</span>
           </div>
         </div>
       </div>

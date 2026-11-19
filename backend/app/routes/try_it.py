@@ -2,7 +2,8 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Optional
+from typing import Any
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import desc, select
@@ -11,9 +12,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.models import AppSettings, DetectorModel, Document, ShowcaseItem
 from app.pipeline.chunking import chunk_text
+from app.pipeline.generate import generate_answer
 from app.pipeline.index import VectorIndex
 from app.pipeline.retrieve import retrieve_chunks
-from app.pipeline.generate import generate_answer
 from app.reliability.features import extract_features
 from app.reliability.score import score_answer_reliability
 
@@ -22,16 +23,16 @@ router = APIRouter(tags=["try_it"])
 
 class AskRequest(BaseModel):
     question: str
-    dataset_id: Optional[str] = None
-    embedding_model: Optional[str] = "sentence-transformers/all-MiniLM-L6-v2"
-    language_model: Optional[str] = None
+    dataset_id: str | None = None
+    embedding_model: str | None = "sentence-transformers/all-MiniLM-L6-v2"
+    language_model: str | None = None
     chunk_size: int = 256
     top_k: int = 3
 
 
 class CompareRequest(BaseModel):
     question: str
-    dataset_id: Optional[str] = None
+    dataset_id: str | None = None
     config_a: AskRequest
     config_b: AskRequest
 
