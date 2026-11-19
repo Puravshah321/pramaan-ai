@@ -172,7 +172,7 @@ export const Models: React.FC = () => {
     } catch (e: any) {
       setTestResponse({
         target,
-        error: e.response?.data?.message || e.message || "Test call failed",
+        error: e.response?.data?.detail || e.response?.data?.message || e.message || "Test call failed",
       });
     } finally {
       setIsTesting(false);
@@ -351,15 +351,31 @@ export const Models: React.FC = () => {
               Current local GGUF models loaded in memory for offline retrieval and generation.
             </p>
           </div>
-          <button
-            type="button"
-            onClick={handleSaveSetup}
-            disabled={updateMutation.isPending}
-            className="btn-primary text-xs inline-flex items-center gap-1.5 shrink-0"
-          >
-            <Save className="w-3.5 h-3.5" />
-            <span>{updateMutation.isPending ? "Saving..." : savedSuccess ? "Saved!" : "Save Setup"}</span>
-          </button>
+          <div className="flex items-center gap-2.5 shrink-0 flex-wrap">
+            <button
+              type="button"
+              onClick={() => handleTestModel(activeLanguage)}
+              disabled={isTesting}
+              className="btn-secondary text-xs inline-flex items-center gap-1.5 px-3 py-2 border border-line rounded-lg hover:border-accent text-ink transition-colors cursor-pointer disabled:opacity-50"
+              title="Run quick local test call with active language model"
+            >
+              {isTesting ? (
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-accent" />
+              ) : (
+                <Play className="w-3.5 h-3.5 text-accent" />
+              )}
+              <span>{isTesting ? "Testing..." : "Test Active Model"}</span>
+            </button>
+            <button
+              type="button"
+              onClick={handleSaveSetup}
+              disabled={updateMutation.isPending}
+              className="btn-primary text-xs inline-flex items-center gap-1.5"
+            >
+              <Save className="w-3.5 h-3.5" />
+              <span>{updateMutation.isPending ? "Saving..." : savedSuccess ? "Saved!" : "Save Setup"}</span>
+            </button>
+          </div>
         </div>
 
         {/* 2-Row Active Setup Info */}
@@ -1062,16 +1078,14 @@ const ModelTableRow: React.FC<{
       <td className="py-2.5 px-3 font-mono">{details?.license || "Apache-2.0"}</td>
       <td className="py-2.5 px-3 text-right">
         <div className="flex items-center justify-end gap-2">
-          {type === "Language" && (
-            <button
-              type="button"
-              onClick={onTest}
-              className="text-xs font-sans text-accent hover:underline px-2 py-1"
-              title="Run quick local test call"
-            >
-              Test
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onTest}
+            className="text-xs font-sans text-accent hover:underline px-2 py-1"
+            title={`Run quick local test call for ${modelId}`}
+          >
+            Test
+          </button>
           <button
             type="button"
             onClick={onRemove}

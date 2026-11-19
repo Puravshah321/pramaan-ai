@@ -1,6 +1,7 @@
 """Hugging Face live API endpoints and local model manager."""
 from __future__ import annotations
 
+import asyncio
 import shutil
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db import get_db
 from app.hf.datasets import get_dataset_splits_and_rows, search_datasets
 from app.hf.hub import get_model_details, get_suggested_models, search_models
-from app.hf.inference import generate_text
+from app.hf.inference import compute_embeddings, generate_text
 from app.runners.local import (
     estimate_model_memory,
     list_local_models,
@@ -99,7 +100,8 @@ async def download_model(req: DownloadModelRequest) -> dict[str, Any]:
         )
 
     try:
-        path = resolve_or_download_gguf(
+        path = await asyncio.to_thread(
+            resolve_or_download_gguf,
             model_id=req.model_id,
             quantization=req.quantization,
             is_embedding=req.is_embedding,
@@ -166,19 +168,87 @@ async def preview_rows(
 async def test_model(req: TestModelRequest) -> dict[str, Any]:
     """Real test call to verify model responsiveness locally."""
     t0 = time.perf_counter()
-    res = await generate_text(
-        model_id=req.model_id,
-        prompt=req.prompt or "What is the capital of France?",
-        max_tokens=32,
+    m_lower = req.model_id.lower().strip()
+    is_emb = (
+        "embed" in m_lower
+        or "bge" in m_lower
+        or "minilm" in m_lower
+        or "similarity" in m_lower
     )
-    t1 = time.perf_counter()
-    latency_ms = round((t1 - t0) * 1000, 2)
 
-    return {
-        "model_id": req.model_id,
-        "response": res.get("text", ""),
-        "latency_ms": latency_ms,
-        "tokens": res.get("tokens", 0),
-        "error": res.get("error"),
-        "source": "local",
-    }
+    # Check if the requested model is ready on local disk
+    local_mods = list_local_models()
+    matched = next(
+        (m for m in local_mods if m["model_id"].lower() == m_lower or m_lower in m["model_id"].lower()),
+        None,
+    )
+
+    if matched and matched["status"] != "ready":
+        return {
+            "model_id": req.model_id,
+            "response": "",
+            "latency_ms": 0.0,
+            "tokens": 0,
+            "error": (
+                f"Model '{req.model_id}' is not downloaded yet ({matched['filename']}). "
+                "Click 'Download' in the Local Model Manager table below first to download it for offline use."
+            ),
+            "source": "local",
+        }
+
+    try:
+        if is_emb:
+            prompt_text = req.prompt or "Pramaan AI dense semantic embedding test."
+            emb_res = await compute_embeddings(
+                model_id=req.model_id,
+                texts=[prompt_text],
+            )
+            t1 = time.perf_counter()
+            latency_ms = round((t1 - t0) * 1000, 2)
+            vectors = emb_res.get("embeddings", [])
+            err = emb_res.get("error")
+
+            if vectors and len(vectors) > 0 and not err:
+                dims = len(vectors[0])
+                first_few = [round(float(v), 4) for v in vectors[0][:3]]
+                resp_text = f"Embedding verified successfully: {dims}-dimensional vector [{', '.join(map(str, first_few))}...]"
+            else:
+                resp_text = ""
+                err = err or "Could not compute embedding vector."
+
+            return {
+                "model_id": req.model_id,
+                "response": resp_text,
+                "latency_ms": latency_ms,
+                "tokens": len(vectors),
+                "error": err,
+                "source": "local",
+            }
+
+        # Language Model generation test
+        res = await generate_text(
+            model_id=req.model_id,
+            prompt=req.prompt or "What is the capital of France? Answer concisely in one sentence.",
+            max_tokens=32,
+        )
+        t1 = time.perf_counter()
+        latency_ms = round((t1 - t0) * 1000, 2)
+
+        return {
+            "model_id": req.model_id,
+            "response": res.get("text", ""),
+            "latency_ms": latency_ms,
+            "tokens": res.get("tokens", 0),
+            "error": res.get("error"),
+            "source": "local",
+        }
+    except Exception as e:
+        t1 = time.perf_counter()
+        return {
+            "model_id": req.model_id,
+            "response": "",
+            "latency_ms": round((t1 - t0) * 1000, 2),
+            "tokens": 0,
+            "error": f"Test call failed: {str(e)}",
+            "source": "local",
+        }

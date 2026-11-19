@@ -5,6 +5,7 @@ const API_BASE = ""; // Vite proxy redirects /api to http://localhost:8000
 
 export const api = axios.create({
   baseURL: API_BASE,
+  timeout: 300000,
   headers: {
     "Content-Type": "application/json",
   },
